@@ -1,4 +1,4 @@
-# Viral Clips Crew 🎥 ✨
+# Cursor for Tiktok 🎥 ✨
 
 Your AI-powered video editor for creating viral TikTok clips!
 
@@ -9,22 +9,22 @@ This project automatically transcribes videos, identifies viral moments using Ge
 
 ```mermaid
 graph TD
-    User[User] -->|Uploads Video| FE[Frontend (React)]
-    FE -->|POST /upload| BE[Backend (FastAPI)]
+    User[User] -->|Uploads Video| FE["Frontend (React)"]
+    FE -->|POST /upload| BE["Backend (FastAPI)"]
     
     subgraph Processing Pipeline
         BE -->|1. Normalize| FFmpeg[FFmpeg]
-        BE -->|2. Transcribe| Whisper[Whisper AI]
-        BE -->|3. Analyze| Gemini[Gemini AI]
-        Gemini -->|Identify Clips| Viral[Viral Segments]
+        BE -->|2. Transcribe| Whisper["Whisper AI"]
+        BE -->|3. Analyze| Gemini["Gemini AI"]
+        Gemini -->|Identify Clips| Viral["Viral Segments"]
         
-        Viral -->|4. Render| FFmpeg2[FFmpeg Split]
+        Viral -->|4. Render| FFmpeg2["FFmpeg Split"]
     end
     
-    FFmpeg2 -->|Output| Final[Viral Clips]
+    FFmpeg2 -->|Output| Final["Viral Clips"]
     
     subgraph Infra
-        Docker[Docker Compose]
+        Docker["Docker Compose"]
         Docker --> FE
         Docker --> BE
     end
