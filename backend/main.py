@@ -37,9 +37,6 @@ app.add_middleware(
 )
 
 from video_processor import FILES_DIR, ClipData, SplitTimelineRequest, render_split_timeline as render_split_timeline_logic
-# UPLOAD_DIR =          # shreesh
-# UPLOAD_DIR = r"D:\SWAGAT\idkhack\files\upload"         # swagat
-# EDIT_DIR = r"D:\SWAGAT\idkhack\files\edit"             # swagat
 
 # Mount the files directory to serve static files
 app.mount("/files", StaticFiles(directory=FILES_DIR), name="files")
@@ -587,9 +584,6 @@ async def user_query(query: Query) -> Tuple[bool, Union[int, str]]:
         Tuple[bool, Union[int, str]]: (success, version_number_or_error_message)
     """
 
-    # edit_dir = r"C:\Users\Robin Roy\Desktop\idkhack\files\edit"
-    # edit_dir = r"C:\Users\Robin Roy\Desktop\idkhack\files\edit"           # SHREESH
-    # edit_dir = r"D:\SWAGAT\idkhack\files\edit"           # SWAGAT
     query.prompt = query.prompt.replace("@", "")
     print(query)
     num_files = 0
