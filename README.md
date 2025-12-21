@@ -36,8 +36,8 @@ graph TD
 
 1. Clone the repo:
    ```bash
-   git clone https://github.com/yourusername/viral-clips-crew.git
-   cd viral-clips-crew/new_app
+   git clone https://github.com/ArvinAIEngineer/Cursor-For-Tiktok-Videos--Open-Source.git
+   cd Cursor-For-Tiktok-Videos--Open-Source
    ```
 2. **Set up Environment**:
    *   Open `docker-compose.yml`.
@@ -106,20 +106,9 @@ graph TD
 
 - **Auto-Viral Clips**: Automatically analyze videos to find the most engaging segments.
 - **AI Text-Based Editing**: Edit videos by querying the transcript (e.g., "Remove fillers", "Keep the funny part").
-- **Smart Thumbnails**: Generate viral thumbnails using AI and snapshots from your video.
+- **Nano Banana Thumbnails**: Generate viral thumbnails using the latest **Gemini 2.5 Flash Image** (Nano Banana) model.
 - **Split Screen**: Create split-screen reactions or gameplay overlays easily.
 
-
-
-   *   *Alternative*: Create a `.env` file in the root directory with `GEMINI_API_KEY=xyz` and run:
-       ```bash
-       docker-compose --env-file .env up --build
-       ```
-3. **Run with Docker Compose**:
-   ```bash
-   docker-compose --env-file .env up --build
-   ```
-4. Open [http://localhost:5173](http://localhost:5173).
 
 
 
