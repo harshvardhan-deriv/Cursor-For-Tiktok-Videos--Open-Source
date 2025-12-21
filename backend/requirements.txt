@@ -1,0 +1,12 @@
+fastapi[standard]
+uvicorn
+python-multipart
+google-genai
+python-dotenv
+edge-tts
+scenedetect[opencv]
+openai-whisper
+setuptools
+crewai
+langchain-google-genai
+lockfile

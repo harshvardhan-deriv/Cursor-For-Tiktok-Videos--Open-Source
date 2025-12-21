@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Node
+node_modules/
+dist/
+
+# Application Data
+files/
+backend/crew_output/
+backend/whisper_output/
+backend/fafo.ipynb
+backend/__pycache__/
+backend/venv/
+backend/.env
+frontend/node_modules/
+
+# Mac
+.DS_Store

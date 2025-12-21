@@ -1,0 +1,582 @@
+/* TikTok Genie Design System */
+:root {
+  /* TikTok Colors */
+  --color-tiktok-black: #121212;
+  --color-tiktok-dark: #000000;
+  --color-tiktok-cyan: #25F4EE;
+  --color-tiktok-magenta: #FE2C55;
+  --color-tiktok-white: #FFFFFF;
+
+  /* Semantic mappings */
+  --color-primary: var(--color-tiktok-magenta);
+  --color-secondary: var(--color-tiktok-cyan);
+  --color-background: var(--color-tiktok-black);
+  --color-card: #1e1e1e;
+  --color-card-hover: #2a2a2a;
+  --color-foreground: var(--color-tiktok-white);
+  --color-muted: #888888;
+  --color-border: #333333;
+  --color-error: #ff4d4f;
+
+  /* Gradients */
+  --gradient-primary: linear-gradient(90deg, var(--color-tiktok-cyan), var(--color-tiktok-magenta));
+  --gradient-hover: linear-gradient(90deg, #F0F0F0, #F0F0F0);
+  /* Light overlay */
+
+  /* Measurements */
+  --border-radius-sm: 4px;
+  --border-radius: 8px;
+  --border-radius-lg: 16px;
+  --border-radius-pill: 9999px;
+
+  --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+
+  --transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+/* Base reset */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Proxima Nova', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Layout */
+.video-editor {
+  display: grid;
+  grid-template-columns: 280px 1fr 300px;
+  /* 3-column layout */
+  min-height: 100vh;
+  width: 100vw;
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+}
+
+/* Sidebar (Tools Palette) */
+.sidebar {
+  background-color: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  z-index: 20;
+}
+
+.right-sidebar {
+  border-left: 1px solid var(--color-border);
+  border-right: none;
+  background-color: var(--color-background);
+  /* Slightly different to distinguish? Or same. */
+}
+
+.sidebar-header {
+  padding: 1rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sidebar-header h2 {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin: 0;
+  color: var(--color-heading);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 1rem;
+}
+
+/* Media List Items */
+.media-item {
+  display: flex;
+  align-items: flex-start;
+  padding: 0.75rem;
+  background-color: var(--color-card);
+  border-radius: var(--border-radius);
+  margin-bottom: 0.75rem;
+  cursor: pointer;
+  transition: var(--transition);
+  border: 1px solid transparent;
+}
+
+.media-item:hover {
+  border-color: var(--color-secondary);
+  box-shadow: 0 0 0 1px var(--color-secondary);
+}
+
+.media-item.active {
+  border: 1px solid var(--color-tiktok-magenta);
+  background-color: rgba(254, 44, 85, 0.1);
+}
+
+.media-thumbnail {
+  width: 50px;
+  height: 50px;
+  background: var(--color-card-hover);
+  border-radius: var(--border-radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 0.75rem;
+  color: var(--color-foreground);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.media-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.media-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.media-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: var(--color-muted);
+}
+
+/* Main Workspace */
+.editor-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--color-tiktok-dark);
+  position: relative;
+}
+
+.editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 2rem;
+  background-color: rgba(18, 18, 18, 0.8);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.editor-header h1 {
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+
+.editor-header h1 span {
+  position: relative;
+  display: inline-block;
+  color: var(--color-foreground);
+}
+
+/* Preview Area - Phone Frame style */
+.editor-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2rem;
+  overflow: visible;
+}
+
+.phone-frame {
+  width: 400px;
+  /* Increased width */
+  height: 711px;
+  /* 9:16 aspect ratio for 400px width */
+  background: black;
+  border-radius: 30px;
+  border: 8px solid #2a2a2a;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  flex-shrink: 0;
+  margin-bottom: 2rem;
+}
+
+.single-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+}
+
+.video-player {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Maximize video to fill frame (crop if needed) */
+}
+
+/* Split Screen */
+.split-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+  align-items: stretch;
+}
+
+.split-slot {
+  flex: 1;
+  position: relative;
+  background: #111;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+}
+
+.split-slot:first-child {
+  /* Separator using shadow to not affect layout */
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.1);
+  z-index: 1;
+}
+
+.split-slot.selected-slot {
+  box-shadow: inset 0 0 0 3px var(--color-tiktok-cyan);
+  z-index: 2;
+}
+
+.split-slot .video-player {
+  width: 100%;
+  height: 100%;
+  object-fit: cover !important;
+  /* Split videos should fill their half without black bars */
+}
+
+.empty-slot,
+.empty-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--color-muted);
+  text-align: center;
+  padding: 1rem;
+}
+
+/* Trimmer UI */
+.trimmer-section {
+  width: 100%;
+  max-width: 600px;
+  background-color: var(--color-card);
+  padding: 1.5rem;
+  border-radius: var(--border-radius-lg);
+  border: 1px solid var(--color-border);
+  margin-bottom: 1.5rem;
+}
+
+.section-label {
+  color: var(--color-tiktok-cyan);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  display: block;
+}
+
+.trimmer-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.trim-slider {
+  flex: 1;
+  accent-color: var(--color-tiktok-magenta);
+  cursor: pointer;
+}
+
+.trim-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.trim-input-group label {
+  font-size: 0.7rem;
+  color: var(--color-muted);
+}
+
+.trim-input {
+  width: 70px;
+  background: var(--color-tiktok-black);
+  border: 1px solid var(--color-border);
+  color: white;
+  padding: 0.5rem;
+  border-radius: 4px;
+  text-align: center;
+}
+
+/* Controls and Prompt */
+.prompt-section {
+  width: 100%;
+  max-width: 600px;
+  background-color: var(--color-card);
+  padding: 1.5rem;
+  border-radius: var(--border-radius-lg);
+  border: 1px solid var(--color-border);
+}
+
+.radio-option.selected::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40%;
+  height: 2px;
+  background: var(--column-tiktok-magenta);
+}
+
+/* Buttons */
+.button {
+  border-radius: var(--border-radius-pill);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  transition: var(--transition);
+}
+
+.button.primary {
+  background: var(--color-tiktok-magenta);
+  color: white;
+}
+
+.button.primary:hover {
+  background: #E42245;
+  /* Slightly darker magenta */
+  transform: scale(1.02);
+}
+
+.upload-button {
+  background: var(--color-tiktok-cyan);
+  color: black;
+  width: 100%;
+  margin-top: 1rem;
+  font-weight: 800;
+}
+
+.upload-button:hover {
+  background: #00D6CF;
+  transform: translateY(-2px);
+}
+
+/* Processing Overlay */
+.processing-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(10px);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.processing-content {
+  text-align: center;
+}
+
+.processing-spinner {
+  width: 60px;
+  height: 60px;
+  border: 4px solid var(--color-tiktok-black);
+  border-top-color: var(--color-tiktok-cyan);
+  border-right-color: var(--color-tiktok-magenta);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 2rem;
+}
+
+/* Helpers */
+.logo {
+  height: 32px;
+}
+
+.hidden {
+  display: none;
+}
+
+.delete-button {
+  color: var(--color-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.delete-button:hover {
+  color: var(--color-error);
+}
+
+.add-timeline-button {
+  color: var(--color-tiktok-cyan);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-tiktok-black);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(5px);
+  z-index: 10000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.modal-content {
+  background: var(--color-card);
+  padding: 2rem;
+  border-radius: var(--border-radius-lg);
+  width: 90%;
+  max-width: 500px;
+  max-height: 90vh;
+  overflow-y: auto;
+  position: relative;
+  border: 1px solid var(--color-border);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.modal-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: none;
+  border: none;
+  color: var(--color-muted);
+  font-size: 1.5rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0.5rem;
+  z-index: 10;
+}
+
+.modal-close:hover {
+  color: var(--color-foreground);
+}
+
+.modal-video-container {
+  width: 100%;
+  height: 60vh;
+  background: #000;
+  border-radius: var(--border-radius);
+  overflow: hidden;
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-video-player {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 1rem;
+  width: 100%;
+  justify-content: center;
+}
+
+.modal-audio-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--color-foreground);
+  padding: 2rem;
+}

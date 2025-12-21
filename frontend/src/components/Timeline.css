@@ -1,0 +1,194 @@
+.timeline-container {
+  background-color: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius);
+  padding: 1rem;
+  margin-top: 1rem;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.timeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.timeline-header h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  margin: 0;
+}
+
+.timeline-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.duration-display {
+  font-size: 0.8rem;
+  color: #888;
+}
+
+/* Horizontal Track */
+.timeline-track {
+  position: relative;
+  background-color: #111;
+  border-radius: 6px;
+  min-height: 100px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid #333;
+  padding: 0.5rem;
+  display: flex;
+  align-items: center;
+}
+
+.timeline-empty-state {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  font-size: 0.9rem;
+  user-select: none;
+  height: 100%;
+}
+
+.clips-row {
+  display: flex;
+  gap: 4px;
+  height: 100%;
+}
+
+.timeline-clip-item {
+  background-color: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  cursor: grab;
+  position: relative;
+  min-width: 100px;
+  max-width: 140px;
+  height: 80px;
+  transition: transform 0.1s, box-shadow 0.1s;
+  user-select: none;
+}
+
+.timeline-clip-item.dragging {
+  opacity: 0.5;
+  border: 1px dashed #FE2C55;
+}
+
+.timeline-clip-item.drag-over {
+  border-color: #25F4EE;
+  transform: scale(1.02);
+}
+
+.clip-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  overflow: hidden;
+  flex: 1;
+  justify-content: center;
+}
+
+.clip-thumb {
+  width: 100%;
+  height: 40px;
+  background: #000;
+  /* In a real app, this would be an img preview */
+  background-image: linear-gradient(45deg, #111 25%, #222 25%, #222 50%, #111 50%, #111 75%, #222 75%, #222 100%);
+  background-size: 10px 10px;
+  border-radius: 2px;
+  margin-bottom: 4px;
+  opacity: 0.6;
+}
+
+.clip-label {
+  font-size: 0.7rem;
+  color: #eee;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+  text-align: center;
+}
+
+
+.clip-handle-grab {
+  cursor: grab;
+  color: #666;
+  margin-bottom: 2px;
+}
+
+.clip-times {
+  font-size: 0.65rem;
+  color: #888;
+  margin-top: 2px;
+}
+
+.resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  background-color: rgba(0, 0, 0, 0.4);
+  color: white;
+  z-index: 5;
+  transition: background-color 0.2s;
+}
+
+.resize-handle:hover {
+  background-color: var(--color-primary, #FE2C55);
+}
+
+.left-handle {
+  left: 0;
+  border-top-left-radius: 4px;
+  border-bottom-left-radius: 4px;
+}
+
+.right-handle {
+  right: 0;
+  border-top-right-radius: 4px;
+  border-bottom-right-radius: 4px;
+}
+
+.clip-remove-btn {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background: #000;
+  border: 1px solid #333;
+  color: #ff4d4f;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+  z-index: 20;
+  /* Higher than handle */
+}
+
+.clip-remove-btn:hover {
+  background: #ff4d4f;
+  color: white;
+}

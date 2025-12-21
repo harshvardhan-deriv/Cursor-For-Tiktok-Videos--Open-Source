@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  backend:
+    build: 
+      context: ./backend
+    ports:
+      - "8001:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - ./backend:/app
+      # Persist data if needed, or keeping it strictly local mapped
+      # - backend_data:/app/files 
+
+  frontend:
+    build: 
+      context: ./frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8001
+    depends_on:
+      - backend
+    # Hot reload for dev
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+# volumes:
+#   backend_data:
