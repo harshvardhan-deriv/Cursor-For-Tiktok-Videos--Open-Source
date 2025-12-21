@@ -857,12 +857,27 @@ export function VideoEditor() {
                   <div className="media-actions" style={{ display: 'flex', gap: '4px' }}>
                     {media.type !== 'audio' && (
                       <button
-                        className="action-button"
+                        className="action-button viral-btn"
                         onClick={(e) => handleAutoGenerate(media.filename || media.name, e)}
                         title="Auto-Generate Viral Clip"
-                        style={{ padding: '4px', background: 'transparent', border: 'none', color: '#fe2c55', cursor: 'pointer' }}
+                        style={{
+                          padding: '6px 12px',
+                          background: '#fe2c55',
+                          border: 'none',
+                          color: 'white',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          borderRadius: '20px',
+                          fontSize: '0.85rem',
+                          fontWeight: '600',
+                          whiteSpace: 'nowrap',
+                          boxShadow: '0 2px 8px rgba(254, 44, 85, 0.4)',
+                          transition: 'all 0.2s ease'
+                        }}
                       >
-                        <Zap size={16} />
+                        <Zap size={18} fill="currentColor" /> Create TikTok Video
                       </button>
                     )}
                     <button

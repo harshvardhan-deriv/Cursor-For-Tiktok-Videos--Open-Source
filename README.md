@@ -39,10 +39,17 @@ graph TD
    git clone https://github.com/yourusername/viral-clips-crew.git
    cd viral-clips-crew/new_app
    ```
-2. Set your API Key in `docker-compose.yml` or create a `.env` file.
-3. Run with Docker Compose:
+2. **Set up Environment**:
+   *   Open `docker-compose.yml`.
+   *   Replace `your_api_key_here` with your actual Google Gemini API Key.
+   *   *Note*: Ensure you have a `.env` file in **both** the root directory (for Docker) and the `backend/` directory (for manual development).
+   *   Run:
+       ```bash
+       docker-compose --env-file .env up --build
+       ```
+3. **Run with Docker Compose**:
    ```bash
-   docker-compose up --build
+   docker-compose --env-file .env up --build
    ```
 4. Open [http://localhost:5173](http://localhost:5173).
 
@@ -101,6 +108,25 @@ graph TD
 - **AI Text-Based Editing**: Edit videos by querying the transcript (e.g., "Remove fillers", "Keep the funny part").
 - **Smart Thumbnails**: Generate viral thumbnails using AI and snapshots from your video.
 - **Split Screen**: Create split-screen reactions or gameplay overlays easily.
+
+
+
+   *   *Alternative*: Create a `.env` file in the root directory with `GEMINI_API_KEY=xyz` and run:
+       ```bash
+       docker-compose --env-file .env up --build
+       ```
+3. **Run with Docker Compose**:
+   ```bash
+   docker-compose --env-file .env up --build
+   ```
+4. Open [http://localhost:5173](http://localhost:5173).
+
+### Manual Setup
+... (kept as is, but cutting short here as I am editing a block, I should just edit lines 49-52 and 127-142)
+Wait, I cannot use "..." in replacement. I will do 2 chunks.
+
+Chunk 1: Updating the command.
+Chunk 2: Deleting the duplicate section.
 
 ## 🤝 Contributing
 
