@@ -121,12 +121,7 @@ graph TD
    ```
 4. Open [http://localhost:5173](http://localhost:5173).
 
-### Manual Setup
-... (kept as is, but cutting short here as I am editing a block, I should just edit lines 49-52 and 127-142)
-Wait, I cannot use "..." in replacement. I will do 2 chunks.
 
-Chunk 1: Updating the command.
-Chunk 2: Deleting the duplicate section.
 
 ## 🤝 Contributing
 
