@@ -12,6 +12,8 @@ from typing import Tuple, Union
 import subprocess
 from constants import SYSTEM_PROMPT, AUDIO_DESCRIPTION_SYSPROMPT
 import time
+import uuid
+import base64
 import asyncio
 import edge_tts
 import re
@@ -638,6 +640,52 @@ class ClipData(BaseModel):
 
 class TimelineRequest(BaseModel):
     clips: list[ClipData]
+
+class ThumbnailRequest(BaseModel):
+    prompt: str
+    filename: str = None  # Optional: filename of the source video/snapshot
+
+@app.post("/generate_thumbnail")
+async def generate_thumbnail(request: ThumbnailRequest):
+    try:
+        print(f"Generating thumbnail for prompt: {request.prompt}")
+        
+        # Call Google Gemini 2.5 Flash Image (Nano Banana) using generate_content
+        response = client.models.generate_content(
+            model='gemini-2.5-flash-image',
+            contents=[request.prompt]
+        )
+
+        image_bytes = None
+        for part in response.parts:
+            if part.inline_data is not None:
+                # part.inline_data.data is already bytes in the SDK, or might need decoding depending on version
+                # The user snippet uses part.as_image() but we need raw bytes for saving or base64.
+                # Let's handle it safely.
+                # If using the latest SDK, inline_data.data should be the bytes.
+                image_bytes = part.inline_data.data
+                break
+        
+        if not image_bytes:
+             raise ValueError("No image part found in response")
+
+        # Save to files directory
+        output_filename = f"thumbnail_{uuid.uuid4()}.png"
+        output_path = os.path.join(FILES_DIR, output_filename)
+        
+        with open(output_path, "wb") as f:
+            f.write(image_bytes)
+            
+        return {
+            "url": f"http://127.0.0.1:8001/files/{output_filename}",
+            "filename": output_filename
+        }
+
+    except Exception as e:
+        print(f"Thumbnail generation failed: {e}")
+        # Fallback to a mock response or error if strictly needed, 
+        # but frontend handles error by using snapshot.
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/render_timeline")
 async def render_timeline(request: TimelineRequest):
