@@ -46,25 +46,46 @@ def get_whisper_output():
     return transcript, subtitles
 
 
-def call_gemini_api(transcript):
+def call_gemini_api(transcript, duration_seconds=None, concept=None):
+    """
+    Ask Gemini for viral clip suggestions. If duration_seconds is set, request 5-15 clips per hour
+    (min 3, max 15), ranked by predicted virality. If concept is provided, prioritize clips that
+    best match the user's description/intent.
+    """
     logging.info("STARTING call_gemini_api")
+    if duration_seconds is not None and duration_seconds > 0:
+        num_clips = max(3, min(15, int(round(duration_seconds / 3600 * 10))))
+    else:
+        num_clips = 3
+
+    concept_block = ""
+    if concept and concept.strip():
+        concept_block = dedent(f"""
+        The user's intended focus or concept for the final video:
+        <user_concept>
+        {concept.strip()}
+        </user_concept>
+        Prioritize clips that best support or align with this concept—e.g. if it's a travel vlog, favor scenic or narrative moments; if it's a tutorial, favor clear explanations. Still rank by viral potential within that focus.
+        """)
 
     prompt = dedent(f"""
-        You will be given a complete transcript from a video. Your task is to identify three 1-minute long clips from this video that have the highest potential to become popular on social media. 
+        You will be given a complete transcript from a video. Your task is to identify {num_clips} short clips from this video that have the highest potential to become popular on social media (e.g. TikTok). Rank them by predicted virality (most viral first).
+        {concept_block}
+        CRITICAL: Each clip must be between 10 and 20 seconds when spoken. Minimum 3 seconds, maximum 30 seconds. When spoken at normal pace, 10-20 seconds is roughly 25-50 words (about 2-4 short sentences) per clip.
         
-        Follow these steps to complete the task:
+        Follow these steps:
         
-        1. Carefully read through the entire transcript, looking for the most powerful, emotionally impactful, surprising, thought-provoking, or otherwise memorable moments. Give priority to answers and speculations rather than questions.
+        1. Carefully read through the entire transcript, looking for the most powerful, emotionally impactful, surprising, thought-provoking, or memorable moments. Give priority to answers and speculations rather than questions. When a user concept is provided, favor moments that align with it.
         
-        2. For each standout moment you identify, extract a 1-minute segment of text from the transcript, centered around that moment. Ensure each segment is approximately 1 minute long when spoken (about 125 words or 10 spoken sentences).
+        2. For each standout moment, extract a SHORT segment of text centered around that moment. Each segment must be 10-20 seconds when spoken (approximately 25-50 words). Do not use 1-minute or long segments.
         
-        3. From these segments, choose the top three that you believe have the highest potential to go viral on social media.
+        3. Choose the top {num_clips} such segments that have the highest viral potential (and best match the user concept when provided).
         
-        4. Rank these three clips from most to least viral potential based on your assessment.
+        4. Rank these {num_clips} clips from most to least viral potential (predicted virality score).
         
-        5. Determine the word count for each of the selected clips.
+        5. Determine the word count for each selected clip (each should be roughly 25-50 words).
         
-        here is the transcript:
+        Here is the transcript:
         <transcript>
         {transcript}
         </transcript>
@@ -107,10 +128,9 @@ def call_gemini_api(transcript):
 
         try:
             response_data = json.loads(response_text)
-            # Ensure there are exactly three clips
-            if len(response_data.get('clips', [])) != 3:
-                logging.warning("The response does not contain exactly three clips. Adjusting...")
-                # Basic adjustment if needed, but Gemini usually respects schema
+            clips = response_data.get('clips', [])
+            if len(clips) < 1:
+                logging.warning("Response has no clips.")
             return response_data
         except json.JSONDecodeError as e:
             logging.error(f"JSON Decode Error: {str(e)}")

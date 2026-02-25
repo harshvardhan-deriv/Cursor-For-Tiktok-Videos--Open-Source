@@ -1,12 +1,14 @@
-fastapi[standard]
-uvicorn
-python-multipart
-google-genai
-python-dotenv
-edge-tts
-scenedetect[opencv]
-openai-whisper
-setuptools
-crewai
-langchain-google-genai
-lockfile
+# Python 3.10+ required (CrewAI, type hints). Use pyenv/.python-version or venv with 3.10+.
+fastapi[standard]>=0.115.0
+uvicorn>=0.32.0
+python-multipart>=0.0.12
+google-genai>=1.0.0
+python-dotenv>=1.0.0
+edge-tts>=6.1.0
+scenedetect[opencv]>=0.6.0
+openai-whisper>=20231117
+setuptools>=70.0.0
+crewai>=0.86.0
+langchain-google-genai>=2.0.0
+lockfile>=0.12.0
+pytest>=7.0.0

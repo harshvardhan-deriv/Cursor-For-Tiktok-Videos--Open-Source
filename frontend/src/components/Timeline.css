@@ -1,4 +1,5 @@
 .timeline-container {
+  position: relative;
   background-color: var(--color-background);
   border: 1px solid var(--color-border);
   border-radius: var(--border-radius);
@@ -7,6 +8,10 @@
   width: 100%;
   display: flex;
   flex-direction: column;
+}
+
+.button.icon.small {
+  padding: 4px 6px;
 }
 
 .timeline-header {
@@ -34,18 +39,68 @@
   color: #888;
 }
 
+/* Pro timeline: scroll container for ruler + track; stays within editor bounds */
+.timeline-scroll-wrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background-color: #0a0a0a;
+  max-width: 100%;
+  width: 100%;
+}
+
+.timeline-scroll-content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.timeline-ruler {
+  position: relative;
+  height: 24px;
+  background-color: #1a1a1a;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
+}
+
+.timeline-ruler-inner {
+  position: relative;
+  height: 100%;
+}
+
+.ruler-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background-color: #444;
+  transform: translateX(-50%);
+}
+
+.ruler-label {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  font-size: 0.65rem;
+  color: #888;
+  white-space: nowrap;
+}
+
+.ruler-tick.ruler-tick-snap-highlight {
+  background-color: #A855F7;
+  width: 2px;
+  z-index: 5;
+}
+
 /* Horizontal Track */
 .timeline-track {
   position: relative;
   background-color: #111;
-  border-radius: 6px;
   min-height: 100px;
-  overflow-x: auto;
   overflow-y: hidden;
-  border: 1px solid #333;
-  padding: 0.5rem;
-  display: flex;
-  align-items: center;
+  overflow-x: visible;
+  padding: 0.5rem 0;
 }
 
 .timeline-empty-state {
@@ -59,10 +114,137 @@
   height: 100%;
 }
 
-.clips-row {
-  display: flex;
-  gap: 4px;
-  height: 100%;
+.timeline-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background-color: #FE2C55;
+  z-index: 30;
+  cursor: ew-resize;
+  pointer-events: auto;
+}
+
+.timeline-playhead::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 8px solid #FE2C55;
+}
+
+.timeline-snap-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background-color: #A855F7;
+  transform: translateX(-50%);
+  z-index: 25;
+  pointer-events: none;
+  animation: timeline-snap-flash 0.25s ease-out;
+}
+
+@keyframes timeline-snap-flash {
+  from { opacity: 0.4; }
+  to { opacity: 1; }
+}
+
+.timeline-trim-tooltip {
+  position: absolute;
+  top: -24px;
+  transform: translateX(-50%);
+  background: #222;
+  color: #fff;
+  padding: 2px 6px;
+  font-size: 0.7rem;
+  border-radius: 4px;
+  white-space: nowrap;
+  z-index: 40;
+  pointer-events: none;
+}
+
+.timeline-snap-btn {
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  background: #222;
+  border: 1px solid #444;
+  color: #888;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.timeline-snap-btn[data-active="true"] {
+  background: #333;
+  color: #25F4EE;
+  border-color: #25F4EE;
+}
+
+.timeline-clip-item.selected {
+  box-shadow: 0 0 0 2px #25F4EE;
+}
+
+.timeline-keyframe-strip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 18px;
+  z-index: 20;
+  pointer-events: none;
+  background: rgba(37, 244, 238, 0.12);
+  border-top: 1px solid rgba(37, 244, 238, 0.35);
+  box-sizing: border-box;
+}
+
+.timeline-keyframe-strip .timeline-keyframe-dot {
+  pointer-events: auto;
+}
+
+.timeline-keyframe-dot {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 12px;
+  height: 12px;
+  min-width: 12px;
+  min-height: 12px;
+  border-radius: 50%;
+  background: #25F4EE;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+  z-index: 25;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.timeline-keyframe-dot:hover,
+.timeline-keyframe-dot.selected {
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  min-height: 14px;
+  background: #fff;
+  border-color: #25F4EE;
+  box-shadow: 0 0 0 2px #25F4EE;
+}
+
+/* Keyframes on clips that are not selected (e.g. added at playhead without selecting) */
+.timeline-keyframe-dot.timeline-keyframe-dot-unselected {
+  background: #FF9500;
+  border-color: rgba(255, 255, 255, 0.8);
+}
+
+.timeline-keyframe-dot.timeline-keyframe-dot-unselected:hover,
+.timeline-keyframe-dot.timeline-keyframe-dot-unselected.selected {
+  background: #ffb340;
+  border-color: #FF9500;
+  box-shadow: 0 0 0 2px #FF9500;
 }
 
 .timeline-clip-item {
@@ -76,11 +258,12 @@
   justify-content: space-between;
   cursor: grab;
   position: relative;
-  min-width: 100px;
-  max-width: 140px;
+  min-width: 24px;
   height: 80px;
+  overflow: visible;
   transition: transform 0.1s, box-shadow 0.1s;
   user-select: none;
+  box-sizing: border-box;
 }
 
 .timeline-clip-item.dragging {
