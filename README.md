@@ -53,10 +53,11 @@ graph TD
    ```
 4. Open [http://localhost:5173](http://localhost:5173).
 
+
 ### Manual Setup
 
 ### Prerequisites
-- Python 3.10+
+- **Python 3.10 or 3.12** (required for CrewAI and auto viral clips). Use [pyenv](https://github.com/pyenv/pyenv) and run `pyenv install 3.12` then `pyenv local 3.12`, or install Python 3.12 from python.org.
 - Node.js & npm
 - FFmpeg (must be installed and in your PATH)
 - Google Gemini API Key
@@ -67,11 +68,14 @@ graph TD
    ```bash
    cd backend
    ```
-2. Create virtual environment:
+2. Create virtual environment with **Python 3.10 or 3.12** (required for auto viral clips):
    ```bash
-   python -m venv venv
+   # Install Python 3.12 if needed: brew install python@3.12  (macOS) or pyenv install 3.12
+   python3.12 -m venv venv
+   # or: python3.10 -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
+   If you had an existing `venv` created with Python 3.9, remove it (`rm -rf venv`) and recreate with 3.10+.
 3. Install dependencies:
    ```bash
    pip install -r requirements.txt
@@ -102,15 +106,48 @@ graph TD
    ```
 4. Open [http://localhost:5173](http://localhost:5173) in your browser.
 
-## 🛠 Features
+## ✅ Testing all features
 
-- **Auto-Viral Clips**: Automatically analyze videos to find the most engaging segments.
-- **AI Text-Based Editing**: Edit videos by querying the transcript (e.g., "Remove fillers", "Keep the funny part").
-- **Nano Banana Thumbnails**: Generate viral thumbnails using the latest **Gemini 2.5 Flash Image** (Nano Banana) model.
-- **Split Screen**: Create split-screen reactions or gameplay overlays easily.
+After starting backend (Python 3.10+) and frontend:
 
+1. **Upload** a video (e.g. a 1–2 min clip) and wait for transcription and snapshot.
+2. **Media library** should show correct size (MB), duration, and thumbnail.
+3. **Create TikTok Video** (auto-generate): each viral segment is exported as a **single vertical clip** (version1.mp4, version2.mp4, …) from the raw footage—no split-screen.
+4. **Timeline**: Add clips and **Export**; works even when some clips have no audio.
+5. **AI Edit**: Use prompts that work with the video only (e.g. vertical 9:16, slow motion). Avoid effects that need external images; use the editing prompt (e.g. “Make it vertical 9:16”) on a video; paths are under the files directory.
 
+## 📋 Functional requirements (current)
 
+- **Upload**: Accept video uploads up to **4 hours** in length. Supported formats: **MP4, MOV, AVI, WebM** (and MP3 for audio). Files are normalized/transcoded to a standard format for processing.
+- **Viral clip suggestions**: **5–15 clip suggestions per hour** of source content, ranked by predicted virality. Each clip is 10–20 seconds (min 3 s, max 30 s).
+- **Auto-reframe**: Clips are auto-reframed from source aspect ratio to **vertical 9:16** for TikTok. Subject tracking (e.g. face-aware framing) is not yet implemented; current behavior is center crop/scale.
+- **Scene detection**: Current pipeline uses **transcript + Gemini** to identify viral moments. Multimodal scene detection (audio energy, transcript sentiment, visual motion, face detection) is planned for future work.
+
+## 🛠 Features (current)
+
+- **One-click viral flow**: Onboarding upload + **description/concept** → transcribe, Gemini (concept-aware viral picks), Crew (timestamps), export one 9:16 clip per viral moment. Also **Create TikTok Video** from the editor on any upload.
+**Auto-Viral Clips**: Analyze the transcript with Gemini, 
+get segment timestamps with Crew, and export **one vertical 
+clip per viral moment** (trimmed from the raw footage, 
+9:16). Each clip gets its own thumbnail; viral clips are 
+labeled in the library.
+- **Timeline**: Single-track editor with playhead, zoom, **magnetic snapping** (ruler + clip edges), trim handles, split at playhead, drag to reorder/move in time. **Keyframes** for position, scale, rotation (add at playhead with or without selecting a clip; cyan = selected clip, orange = unselected).
+- **Export**: Render timeline → **browser download** (FileResponse, no separate download step).
+- **Canvas**: 9:16 preview, pan/zoom/rotate, safe-area guides; transforms and keyframes drive export.
+- **AI text-based editing**: Prompt-driven edits (trim, crop, speed, etc.) on files in the project.
+- **Thumbnails**: Gemini 2.5 Flash Image for viral thumbnail generation.
+- **Split screen**: Top/bottom timelines and export.
+
+---
+
+## To do & further considerations
+
+- **Subject tracking** for perfect long→short cuts (e.g. face-aware framing instead of center crop).
+- **Transitions / effects** (cross-dissolve, wipes, etc.).
+- **Captions** (burn-in or exportable).
+- **B-roll** (cutaways, overlay clips).
+
+---
 
 ## 🤝 Contributing
 

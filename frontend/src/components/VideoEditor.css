@@ -224,6 +224,37 @@ body {
   background: #000;
 }
 
+.canvas-9-16 {
+  position: relative;
+}
+
+.canvas-video-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+.canvas-video-wrap:active {
+  cursor: grabbing;
+}
+
+.safe-area-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.safe-area-inner {
+  width: 90%;
+  height: 90%;
+  border: 1px dashed rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+}
+
 .video-player {
   width: 100%;
   height: 100%;

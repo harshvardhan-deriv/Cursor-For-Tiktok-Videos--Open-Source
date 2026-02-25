@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import {
   Upload,
   Wand2,
@@ -20,6 +20,7 @@ import { FaTrash } from "react-icons/fa";
 import "./VideoEditor.css";
 import "./ToastNotification.css";
 import { Timeline } from "./Timeline";
+import { tracksToExportClips, computeTimelineStarts, getTransformAtTime, getTotalDuration, getActiveClipAtTime } from "../lib/timelineState";
 import axios from "axios";
 import { Link, useNavigate } from "react-router-dom";
 import logo from "/ezlogo_crop.svg";
@@ -60,6 +61,9 @@ export function VideoEditor() {
 
   const [singleZoom, setSingleZoom] = useState(1);
   const [singlePanY, setSinglePanY] = useState(0);
+  const [singlePanX, setSinglePanX] = useState(0);
+  const [singleRotation, setSingleRotation] = useState(0);
+  const [showSafeArea, setShowSafeArea] = useState(true);
 
   // Timeline State
   const [timelineTracks, setTimelineTracks] = useState([]); // For Single view
@@ -67,7 +71,8 @@ export function VideoEditor() {
   const [bottomTimelineTracks, setBottomTimelineTracks] = useState([]); // For Split Bottom
   const [audioTracks, setAudioTracks] = useState([]); // Background Music
   const [isPlayingTimeline, setIsPlayingTimeline] = useState(false);
-  const [currentTimelineIndex, setCurrentTimelineIndex] = useState(0);
+  const [timelineCurrentTime, setTimelineCurrentTime] = useState(0);
+  const [selectedClipIndex, setSelectedClipIndex] = useState(null);
 
   // Refs
   const videoRef = useRef(null);
@@ -75,7 +80,132 @@ export function VideoEditor() {
   const bottomVideoRef = useRef(null);
   const fileInputRef = useRef(null);
   const promptRef = useRef(null);
+  const canvasPanRef = useRef(null);
   const navigate = useNavigate();
+
+  // #region agent log
+  useEffect(() => {
+    fetch('http://127.0.0.1:7244/ingest/b7f9bb07-2a1d-4c55-9898-57ec776c5f82', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '057623' },
+      body: JSON.stringify({
+        sessionId: '057623',
+        location: 'VideoEditor.jsx:mount',
+        message: 'VideoEditor mounted',
+        data: { hasTracks: Array.isArray(timelineTracks), trackCount: timelineTracks?.length ?? 0 },
+        timestamp: Date.now(),
+        hypothesisId: 'editor_visible',
+      }),
+    }).catch(() => {});
+  }, []);
+  // #endregion
+
+  useEffect(() => {
+    const onMove = (e) => {
+      const pan = canvasPanRef.current;
+      if (!pan) return;
+      const dx = (e.clientX - pan.startX) / 5;
+      const dy = (e.clientY - pan.startY) / 5;
+      setSinglePanX((p) => Math.max(-50, Math.min(50, pan.startPanX + dx)));
+      setSinglePanY((p) => Math.max(-50, Math.min(50, pan.startPanY + dy)));
+    };
+    const onUp = () => {
+      canvasPanRef.current = null;
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
+  const timelineStarts = useMemo(() => computeTimelineStarts(timelineTracks), [timelineTracks]);
+  const totalDuration = useMemo(() => getTotalDuration(timelineTracks), [timelineTracks]);
+  const getClipIndexAtTime = useCallback(
+    (t) => {
+      const active = getActiveClipAtTime(timelineTracks, timelineStarts, t);
+      return active != null ? active.index : null;
+    },
+    [timelineTracks, timelineStarts]
+  );
+  const activeAtCurrentTime = getActiveClipAtTime(timelineTracks, timelineStarts, timelineCurrentTime);
+  const previewClipIndex = activeAtCurrentTime?.index ?? null;
+  const previewClip = activeAtCurrentTime?.clip ?? null;
+  const previewSourceTime = activeAtCurrentTime?.mediaTime ?? 0;
+  const currentClipIndexRef = useRef(null);
+  if (previewClipIndex != null) currentClipIndexRef.current = previewClipIndex;
+
+  const videoLoadingNewSourceRef = useRef(false);
+  const pendingSeekRef = useRef(null);
+  useEffect(() => {
+    if (timelineTracks.length === 0 || !videoRef.current) return;
+    if (previewClip == null) {
+      videoRef.current.pause();
+      videoLoadingNewSourceRef.current = false;
+      pendingSeekRef.current = null;
+      return;
+    }
+    const v = videoRef.current;
+    const desiredSrc = (previewClip.url || '').split('?')[0];
+    const currentSrc = (v.src || '').split('?')[0];
+    const srcMatches = desiredSrc && currentSrc && (currentSrc === desiredSrc || currentSrc.indexOf(desiredSrc) !== -1);
+    const needsLoad = !srcMatches || v.readyState < 2;
+    if (needsLoad) {
+      if (!srcMatches) {
+        videoLoadingNewSourceRef.current = true;
+        v.src = previewClip.url;
+      }
+      pendingSeekRef.current = { url: previewClip.url, seekTo: previewSourceTime, playing: isPlayingTimeline };
+      const onLoaded = () => {
+        const p = pendingSeekRef.current;
+        const seekTo = p?.seekTo;
+        const playing = p?.playing;
+        if (p && (v.src || '').indexOf((p.url || '').split('?')[0]) !== -1) {
+          v.currentTime = p.seekTo;
+          if (p.playing) v.play().catch(() => {});
+        }
+        videoLoadingNewSourceRef.current = false;
+        pendingSeekRef.current = null;
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/b7f9bb07-2a1d-4c55-9898-57ec776c5f82',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'057623'},body:JSON.stringify({sessionId:'057623',location:'VideoEditor.jsx:onLoaded',message:'loadeddata fired',data:{seekTo,playing,readyState:v.readyState},timestamp:Date.now(),hypothesisId:'playback'})}).catch(()=>{});
+        // #endregion
+      };
+      v.addEventListener('loadeddata', onLoaded, { once: true });
+      v.addEventListener('error', () => {
+        videoLoadingNewSourceRef.current = false;
+        pendingSeekRef.current = null;
+      }, { once: true });
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/b7f9bb07-2a1d-4c55-9898-57ec776c5f82',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'057623'},body:JSON.stringify({sessionId:'057623',location:'VideoEditor.jsx:needsLoad',message:'waiting for loadeddata',data:{previewClipIndex,readyState:v.readyState,srcMatches},timestamp:Date.now(),hypothesisId:'playback'})}).catch(()=>{});
+      // #endregion
+      return;
+    }
+    if (videoLoadingNewSourceRef.current) return;
+    if (Math.abs(v.currentTime - previewSourceTime) > 0.15) {
+      v.currentTime = previewSourceTime;
+    }
+    if (isPlayingTimeline) {
+      v.play().catch(() => {});
+    } else {
+      v.pause();
+    }
+  }, [timelineTracks.length, previewClip?.id, previewClip?.url, previewClipIndex, previewSourceTime, isPlayingTimeline]);
+
+  const timelineCurrentTimeRef = useRef(timelineCurrentTime);
+  timelineCurrentTimeRef.current = timelineCurrentTime;
+
+  useEffect(() => {
+    if (!isPlayingTimeline || timelineTracks.length === 0) return;
+    const id = setInterval(() => {
+      setTimelineCurrentTime((prev) => {
+        const next = Math.min(totalDuration, prev + 0.05);
+        if (next >= totalDuration) setIsPlayingTimeline(false);
+        return next;
+      });
+    }, 50);
+    return () => clearInterval(id);
+  }, [isPlayingTimeline, timelineTracks.length, totalDuration]);
 
   // Combined Media List
   const allMedia = [...mediaFiles, ...editedVersions].sort(
@@ -116,15 +246,18 @@ export function VideoEditor() {
       if (response.status === 200) {
         const mappedFiles = response.data.map(item => ({
           id: item.filename,
-          name: item.filename, // Added name property
+          name: item.filename,
           file: {
             name: item.filename,
-            size: 0
+            size: item.size != null ? item.size : 0
           },
           url: item.url,
           filename: item.filename,
           type: item.type,
-          uploadDate: new Date(item.uploadDate * 1000)
+          uploadDate: new Date(item.uploadDate * 1000),
+          durationSeconds: item.durationSeconds != null ? item.durationSeconds : null,
+          thumbnailUrl: item.thumbnailUrl || null,
+          isViralClip: item.isViralClip === true || (typeof item.filename === 'string' && /^version\d+\.mp4$/i.test(item.filename))
         }));
         setMediaFiles(mappedFiles);
         return mappedFiles;
@@ -365,7 +498,8 @@ export function VideoEditor() {
       }
     } catch (error) {
       console.error("Auto-generate failed:", error);
-      showToastNotification("Generation failed. See console for details.");
+      const msg = error.response?.data?.detail || error.message || "Generation failed. See console for details.";
+      showToastNotification(typeof msg === "string" ? msg : "Generation failed.");
     } finally {
       setIsProcessing(false);
     }
@@ -471,16 +605,35 @@ export function VideoEditor() {
     }).format(date);
   };
 
-  // Timeline Functions
+  const resolveClipDurationRef = useRef(new Set());
+  useEffect(() => {
+    timelineTracks.forEach((clip) => {
+      if (clip.type === 'audio' || !clip.url) return;
+      if (clip.durationSeconds != null && clip.durationSeconds > 0) return;
+      if (resolveClipDurationRef.current.has(clip.timelineId)) return;
+      resolveClipDurationRef.current.add(clip.timelineId);
+      const v = document.createElement('video');
+      v.preload = 'metadata';
+      v.onloadedmetadata = () => {
+        const duration = Math.max(0.1, v.duration);
+        resolveClipDurationRef.current.delete(clip.timelineId);
+        setTimelineTracks((prev) =>
+          prev.map((c) => (c.timelineId === clip.timelineId ? { ...c, endTime: duration } : c))
+        );
+        v.src = '';
+      };
+      v.onerror = () => resolveClipDurationRef.current.delete(clip.timelineId);
+      v.src = clip.url;
+    });
+  }, [timelineTracks]);
+
   const addToTimeline = (mediaItem, targetIndex, explicitSlot) => {
-    // Default to 10s or 0 if unknown duration. 
-    // Ideally we should know duration. Media item might not have it unless we pre-loaded metadata.
-    // For now we default to 10s as per previous logic.
+    const durationSec = mediaItem.durationSeconds ?? 10;
     const newItem = {
       ...mediaItem,
       timelineId: crypto.randomUUID(),
       startTime: 0,
-      endTime: 10,
+      endTime: Math.max(0.1, durationSec),
     };
 
     if (mediaItem.type === 'audio') {
@@ -519,11 +672,12 @@ export function VideoEditor() {
       setTimelineTracks(prev => {
         const newTracks = [...prev];
         const idx = typeof targetIndex === 'number' ? targetIndex : prev.length;
-        newTracks.splice(idx, 0, newItem);
+        const timelineStart = getTotalDuration(prev);
+        const itemWithStart = { ...newItem, timelineStart };
+        newTracks.splice(idx, 0, itemWithStart);
         return newTracks;
       });
       showToastNotification(`Added to Timeline`);
-      // Auto-preview first clip if empty
       if (timelineTracks.length === 0) setActiveMediaId(mediaItem.id);
     }
   };
@@ -534,7 +688,13 @@ export function VideoEditor() {
     } else if (trackType === 'bottom') {
       setBottomTimelineTracks(prev => prev.filter((_, i) => i !== index));
     } else {
-      setTimelineTracks(prev => prev.filter((_, i) => i !== index));
+      setTimelineTracks(prev => {
+        const next = prev.filter((_, i) => i !== index);
+        const newTotal = getTotalDuration(next);
+        setTimelineCurrentTime((t) => (newTotal > 0 ? Math.min(t, newTotal) : 0));
+        return next;
+      });
+      setSelectedClipIndex((s) => (s === index ? null : s > index ? s - 1 : s));
     }
   };
 
@@ -560,6 +720,15 @@ export function VideoEditor() {
     if (trackType === 'top') setTopTimelineTracks(updater);
     else if (trackType === 'bottom') setBottomTimelineTracks(updater);
     else setTimelineTracks(updater);
+  };
+
+  const handleClipMoveInTime = (clipIndex, newStartTime) => {
+    setTimelineTracks((prev) => {
+      if (clipIndex < 0 || clipIndex >= prev.length) return prev;
+      const next = [...prev];
+      next[clipIndex] = { ...next[clipIndex], timelineStart: Math.max(0, newStartTime) };
+      return next;
+    });
   };
 
   const makeRemoveHandler = (type) => (index) => removeFromTimeline(index, type);
@@ -591,7 +760,9 @@ export function VideoEditor() {
       }
     } else {
       setActiveMediaId(clip.id);
-      if (videoRef.current) {
+      if (timelineTracks.length > 0 && timelineStarts[index] != null) {
+        handleTimelineSeek(timelineStarts[index]);
+      } else if (videoRef.current) {
         videoRef.current.src = clip.url;
         videoRef.current.currentTime = clip.startOffset || 0;
       }
@@ -611,68 +782,171 @@ export function VideoEditor() {
   };
 
 
+  const effectiveSingleTransform = useMemo(() => {
+    if (selectedClipIndex != null && selectedClipIndex < timelineTracks.length) {
+      const clip = timelineTracks[selectedClipIndex];
+      const start = timelineStarts[selectedClipIndex];
+      const timeInClip = timelineCurrentTime - start;
+      if (clip.keyframes?.length) {
+        return getTransformAtTime(clip, timeInClip);
+      }
+    }
+    return {
+      positionX: singlePanX,
+      positionY: singlePanY,
+      scale: singleZoom,
+      rotation: singleRotation
+    };
+  }, [
+    selectedClipIndex,
+    timelineTracks,
+    timelineStarts,
+    timelineCurrentTime,
+    singleZoom,
+    singlePanY,
+    singlePanX,
+    singleRotation
+  ]);
+
+  const handleTimelineSeek = (sequenceTime) => {
+    setTimelineCurrentTime(sequenceTime);
+    const active = getActiveClipAtTime(timelineTracks, timelineStarts, sequenceTime);
+    if (!videoRef.current) return;
+    if (active == null) {
+      videoRef.current.pause();
+      return;
+    }
+    const sourceTime = active.mediaTime;
+    setActiveMediaId(active.clip.id);
+    videoRef.current.src = active.clip.url;
+    videoRef.current.currentTime = sourceTime;
+  };
+
+  const handleAddKeyframe = () => {
+    const clipIndexAtPlayhead = getClipIndexAtTime(timelineCurrentTime);
+    const clipIndex = (selectedClipIndex != null && selectedClipIndex < timelineTracks.length)
+      ? selectedClipIndex
+      : clipIndexAtPlayhead;
+    if (clipIndex == null || clipIndex >= timelineTracks.length) return;
+    const clip = timelineTracks[clipIndex];
+    const start = timelineStarts[clipIndex];
+    const tInClip = timelineCurrentTime - start;
+    const inPoint = clip.startTime ?? 0;
+    const outPoint = clip.endTime ?? 10;
+    const duration = outPoint - inPoint;
+    if (tInClip < -0.01 || tInClip > duration + 0.01) {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/b7f9bb07-2a1d-4c55-9898-57ec776c5f82',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'057623'},body:JSON.stringify({sessionId:'057623',location:'VideoEditor.jsx:handleAddKeyframe',message:'early return tInClip',data:{tInClip,duration},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
+      // #endregion
+      return;
+    }
+    const value = {
+      positionX: singlePanX,
+      positionY: singlePanY,
+      scale: singleZoom,
+      rotation: singleRotation
+    };
+    const kfs = [...(clip.keyframes || []), { t: Math.max(0, Math.min(duration, tInClip)), value }].sort(
+      (a, b) => a.t - b.t
+    );
+    setTimelineTracks((prev) => {
+      const next = [...prev];
+      next[clipIndex] = { ...clip, keyframes: kfs };
+      return next;
+    });
+  };
+
+  const handleKeyframeMove = (clipIndex, keyframeIndex, newT) => {
+    setTimelineTracks((prev) => {
+      const next = [...prev];
+      const clip = next[clipIndex];
+      const kfs = [...(clip.keyframes || [])];
+      if (!kfs[keyframeIndex]) return prev;
+      const inPoint = clip.startTime ?? 0;
+      const outPoint = clip.endTime ?? 10;
+      const duration = outPoint - inPoint;
+      kfs[keyframeIndex] = { ...kfs[keyframeIndex], t: Math.max(0, Math.min(duration, newT)) };
+      kfs.sort((a, b) => a.t - b.t);
+      next[clipIndex] = { ...clip, keyframes: kfs };
+      return next;
+    });
+  };
+
+  const handleSplitSingle = () => {
+    const idx = getClipIndexAtTime(timelineCurrentTime);
+    if (idx == null) return;
+    const clip = timelineTracks[idx];
+    const start = timelineStarts[idx];
+    const inPoint = clip.startTime ?? 0;
+    const outPoint = clip.endTime ?? 10;
+    const splitSourceTime = inPoint + (timelineCurrentTime - start);
+    if (splitSourceTime <= inPoint + 0.1 || splitSourceTime >= outPoint - 0.1) return;
+    const firstEnd = start + (splitSourceTime - inPoint);
+    const first = { ...clip, endTime: splitSourceTime };
+    const second = {
+      ...clip,
+      timelineId: crypto.randomUUID(),
+      startTime: splitSourceTime,
+      endTime: outPoint,
+      timelineStart: firstEnd,
+      startOffset: (clip.startOffset ?? 0) + (splitSourceTime - inPoint)
+    };
+    setTimelineTracks((prev) => {
+      const next = [...prev];
+      next.splice(idx, 1, first, second);
+      return next;
+    });
+    setSelectedClipIndex(idx + 1);
+  };
+
+  const togglePlayPause = () => {
+    if (isPlayingTimeline) {
+      setIsPlayingTimeline(false);
+      return;
+    }
+    if (timelineTracks.length === 0) return;
+    setIsPlayingTimeline(true);
+  };
+
   const playTimeline = () => {
     if (timelineTracks.length === 0) return;
-
+    setTimelineCurrentTime(0);
     setIsPlayingTimeline(true);
-    setCurrentTimelineIndex(0);
-
-    // Start playing the first clip
-    if (videoRef.current) {
-      const clip = timelineTracks[0];
-      videoRef.current.src = clip.url;
-      videoRef.current.currentTime = clip.startTime || 0;
-      setTimeout(() => {
-        videoRef.current.play();
-      }, 100);
-    }
   };
 
   const handleVideoEnded = () => {
-    if (isPlayingTimeline) {
-      const currentClip = timelineTracks[currentTimelineIndex];
-      // Check if we hit the end trim of current clip? 
-      // HTML Video 'ended' event only fires at end of file. 
-      // We need 'timeupdate' to enforce end trim.
-      // But for now, let's assume end trim = file end, or user is just previewing.
-
-      if (currentTimelineIndex < timelineTracks.length - 1) {
-        // Play next clip
-        const nextIndex = currentTimelineIndex + 1;
-        setCurrentTimelineIndex(nextIndex);
-        const nextClip = timelineTracks[nextIndex];
-        videoRef.current.src = nextClip.url;
-        videoRef.current.currentTime = nextClip.startTime || 0;
-        setTimeout(() => {
-          videoRef.current.play();
-        }, 100);
-      } else {
-        // End of timeline
-        setIsPlayingTimeline(false);
-        setCurrentTimelineIndex(0);
-      }
+    if (!isPlayingTimeline) return;
+    const idx = currentClipIndexRef.current;
+    if (idx == null || idx < 0 || idx >= timelineTracks.length) return;
+    const clip = timelineTracks[idx];
+    const start = timelineStarts[idx];
+    const dur = (clip.endTime ?? 10) - (clip.startTime ?? 0);
+    const clipEndTime = start + dur;
+    if (clipEndTime >= totalDuration) {
+      setTimelineCurrentTime(totalDuration);
+      setIsPlayingTimeline(false);
+      return;
     }
+    setTimelineCurrentTime(clipEndTime);
   };
 
-  // Enforce trim end during playback
   const handleTimeUpdate = () => {
-    if (isPlayingTimeline && videoRef.current) {
-      const currentClip = timelineTracks[currentTimelineIndex];
-      if (currentClip && currentClip.endTime && videoRef.current.currentTime >= currentClip.endTime) {
-        // Move to next clip
-        handleVideoEnded();
-      }
-    }
+    if (!isPlayingTimeline || !videoRef.current) return;
+    const idx = currentClipIndexRef.current;
+    if (idx == null || idx >= timelineTracks.length) return;
+    const clip = timelineTracks[idx];
+    const endTime = clip?.endTime ?? 10;
+    if (videoRef.current.currentTime >= endTime) handleVideoEnded();
   };
 
   const exportTimeline = async () => {
-    let clipsToRender = [];
-    let endpoint = "render_timeline"; // Default for single timeline
+    let clipsToRender = {};
+    const endpoint = "http://127.0.0.1:8001/" + (isSplitScreen ? "render_split_timeline" : "render_timeline");
 
-    const formatClip = (t) => ({
+    const formatAudioClip = (t) => ({
       filename: t.filename || t.name,
-      start: t.startTime || 0,
-      end: t.endTime || 10 // defaults
+      start: t.startTime ?? 0,
+      end: t.endTime ?? 10
     });
 
     if (isSplitScreen) {
@@ -680,11 +954,10 @@ export function VideoEditor() {
         showToastNotification("No clips in either timeline to export.");
         return;
       }
-      endpoint = "render_split_timeline";
       clipsToRender = {
-        top_clips: topTimelineTracks.map(formatClip),
-        bottom_clips: bottomTimelineTracks.map(formatClip),
-        audio_clips: audioTracks.map(formatClip),
+        top_clips: tracksToExportClips(topTimelineTracks),
+        bottom_clips: tracksToExportClips(bottomTimelineTracks),
+        audio_clips: audioTracks.map(formatAudioClip),
         top_zoom: topZoom,
         top_pan_y: topPanY,
         bottom_zoom: bottomZoom,
@@ -695,23 +968,49 @@ export function VideoEditor() {
         showToastNotification("No clips in timeline to export.");
         return;
       }
-      clipsToRender = {
-        clips: timelineTracks.map(formatClip)
-      };
+      const clips = tracksToExportClips(timelineTracks);
+      clips.forEach((c, i) => {
+        const tf = getTransformAtTime(timelineTracks[i], 0);
+        c.position_x = tf.positionX;
+        c.position_y = tf.positionY;
+        c.scale = tf.scale;
+        c.rotation = tf.rotation;
+      });
+      clipsToRender = { clips };
     }
 
     setIsProcessing(true);
-    showToastNotification("Rendering timeline...");
+    showToastNotification("Rendering…");
 
     try {
-      const response = await axios.post(`http://127.0.0.1:8001/${endpoint}`, clipsToRender);
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(clipsToRender)
+      });
 
-      if (response.status === 200) {
-        const newFilename = response.data.filename;
-        showToastNotification(`Timeline rendered: ${newFilename}`);
-
-        // Optionally, fetch media again to show the new rendered file
-        // await fetchMedia();
+      const contentType = response.headers.get("content-type") || "";
+      if (response.ok && (contentType.includes("video/mp4") || contentType.includes("application/octet-stream"))) {
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "TikTok_export.mp4";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToastNotification("Downloaded");
+      } else {
+        let message = "Timeline export failed";
+        if (!response.ok) {
+          try {
+            const errBody = await response.text();
+            const parsed = errBody.startsWith("{") ? JSON.parse(errBody) : null;
+            if (parsed?.detail) message = parsed.detail;
+          } catch (_) { /* ignore */ }
+        }
+        showToastNotification(message);
       }
     } catch (error) {
       console.error("Timeline export failed:", error);
@@ -830,6 +1129,14 @@ export function VideoEditor() {
                   <div className="media-thumbnail">
                     {media.type === "audio" ? (
                       <Volume2 size={24} />
+                    ) : media.thumbnailUrl ? (
+                      <img
+                        src={media.thumbnailUrl}
+                        alt=""
+                        width="50"
+                        height="50"
+                        style={{ objectFit: 'cover', borderRadius: '4px' }}
+                      />
                     ) : (
                       <video
                         src={media.url}
@@ -845,21 +1152,33 @@ export function VideoEditor() {
                     )}
                   </div>
                   <div className="media-details">
-                    <div className="media-name">{media.name || media.versionNumber}</div>
+                    <div className="media-name" style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                      {media.name || media.versionNumber}
+                      {media.isViralClip && (
+                        <span className="viral-badge" style={{ fontSize: '0.7rem', background: 'rgba(254, 44, 85, 0.25)', color: '#fe2c55', padding: '2px 6px', borderRadius: '10px', fontWeight: 600 }}>Viral clip</span>
+                      )}
+                    </div>
                     <div className="media-meta">
                       <span className="file-size">
                         {media.file?.size
                           ? (media.file.size / (1024 * 1024)).toFixed(2) + " MB"
                           : "0.00 MB"}
                       </span>
+                      {media.durationSeconds != null && (
+                        <span className="file-duration" style={{ marginLeft: '6px' }}>
+                          {media.durationSeconds < 60
+                            ? `${Math.round(media.durationSeconds)} sec`
+                            : `${Math.floor(media.durationSeconds / 60)}:${String(Math.round(media.durationSeconds % 60)).padStart(2, '0')}`}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="media-actions" style={{ display: 'flex', gap: '4px' }}>
-                    {media.type !== 'audio' && (
+                    {media.type !== 'audio' && !media.isViralClip && (
                       <button
                         className="action-button viral-btn"
                         onClick={(e) => handleAutoGenerate(media.filename || media.name, e)}
-                        title="Auto-Generate Viral Clip"
+                        title="Generate viral clips from this video"
                         style={{
                           padding: '6px 12px',
                           background: '#fe2c55',
@@ -971,27 +1290,48 @@ export function VideoEditor() {
                   )}
                 </div>
               </div>
-            ) : (
-              activeMedia ? (
-                <div className="single-container">
+            ) : timelineTracks.length > 0 ? (
+              /* Timeline-driven preview: clip at current time or black */
+              <div className="single-container canvas-9-16">
+                <div
+                  className="canvas-video-wrap"
+                  onMouseDown={(e) => {
+                    if (e.target.closest('video')) canvasPanRef.current = { startX: e.clientX, startY: e.clientY, startPanX: singlePanX, startPanY: singlePanY };
+                  }}
+                >
                   <video
                     ref={videoRef}
-                    src={activeMedia.url}
+                    src={previewClip?.url ?? ''}
                     className="video-player"
                     controls
                     playsInline
                     onTimeUpdate={handleTimeUpdate}
                     onEnded={handleVideoEnded}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', transform: `scale(${singleZoom}) translateY(${singlePanY}%)` }}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                      opacity: previewClip ? 1 : 0,
+                      transform: `scale(${effectiveSingleTransform.scale}) translate(${effectiveSingleTransform.positionX}%, ${effectiveSingleTransform.positionY}%) rotate(${effectiveSingleTransform.rotation}deg)`
+                    }}
                   />
+                  {!previewClip && (
+                    <div className="canvas-black" style={{ position: 'absolute', inset: 0, background: '#000', pointerEvents: 'none' }} />
+                  )}
                 </div>
-              ) : (
-                <div className="empty-preview">
-                  <Video size={48} />
-                  <h3>No Video Selected</h3>
-                  <p>Select a video from the library to start editing</p>
-                </div>
-              )
+                {showSafeArea && (
+                  <div className="safe-area-overlay" aria-hidden>
+                    <div className="safe-area-inner" />
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* No timeline clips: empty canvas (deleting last clip must clear preview) */
+              <div className="empty-preview">
+                <Video size={48} />
+                <h3>No Video Selected</h3>
+                <p>Add clips to the timeline to start editing</p>
+              </div>
             )}
           </div>
 
@@ -1087,11 +1427,49 @@ export function VideoEditor() {
                   type="range" min="-50" max="50" step="1"
                   value={singlePanY}
                   onChange={(e) => setSinglePanY(parseFloat(e.target.value))}
+                  style={{ width: '100%', cursor: 'pointer', marginBottom: '1rem' }}
+                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                  <label className="section-label" style={{ marginBottom: 0 }}>Horizontal Position</label>
+                  <span style={{ fontSize: '0.8rem', color: '#888' }}>{singlePanX}%</span>
+                </div>
+                <input
+                  type="range" min="-50" max="50" step="1"
+                  value={singlePanX}
+                  onChange={(e) => setSinglePanX(parseFloat(e.target.value))}
+                  style={{ width: '100%', cursor: 'pointer', marginBottom: '1rem' }}
+                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                  <label className="section-label" style={{ marginBottom: 0 }}>Rotation</label>
+                  <span style={{ fontSize: '0.8rem', color: '#888' }}>{singleRotation}°</span>
+                </div>
+                <input
+                  type="range" min="-180" max="180" step="1"
+                  value={singleRotation}
+                  onChange={(e) => setSingleRotation(parseFloat(e.target.value))}
                   style={{ width: '100%', cursor: 'pointer' }}
                 />
 
-                <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
-                  <button className="button small outline" onClick={() => { setSingleZoom(1); setSinglePanY(0); }}>Reset</button>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
+                  <label className="section-label" style={{ marginBottom: 0 }}>Safe area</label>
+                  <button
+                    type="button"
+                    className={`button small ${showSafeArea ? 'primary' : 'outline'}`}
+                    onClick={() => setShowSafeArea((s) => !s)}
+                  >
+                    {showSafeArea ? 'On' : 'Off'}
+                  </button>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', marginTop: '1rem' }}>
+                  <button className="button small outline" onClick={() => { setSingleZoom(1); setSinglePanY(0); setSinglePanX(0); setSingleRotation(0); }}>Reset</button>
+                  <button
+                    className="button small primary"
+                    onClick={handleAddKeyframe}
+                    disabled={getClipIndexAtTime(timelineCurrentTime) == null}
+                    title="Add keyframe at playhead (current zoom/pan). Uses clip under playhead if none selected."
+                  >
+                    <Plus size={14} /> Add Keyframe
+                  </button>
                 </div>
               </div>
             )}
@@ -1168,7 +1546,17 @@ export function VideoEditor() {
                   onTrimPreview={handleTrimPreview('single')}
                   onPlayTimeline={playTimeline}
                   onClipDrop={makeDropHandler('single')}
-                  totalDuration={60}
+                  onClipMoveInTime={handleClipMoveInTime}
+                  totalDuration={timelineTracks.length ? undefined : 60}
+                  currentTime={timelineCurrentTime}
+                  onSeek={handleTimelineSeek}
+                  onSplitAtPlayhead={handleSplitSingle}
+                  selectedClipIndex={selectedClipIndex}
+                  onSelectClip={setSelectedClipIndex}
+                  isPlaying={isPlayingTimeline}
+                  onPlayPause={togglePlayPause}
+                  onKeyframeAdd={handleAddKeyframe}
+                  onKeyframeMove={handleKeyframeMove}
                 />
                 {/* Optional: Add Audio Track to Single View too if needed, but user focused on Split */}
               </>

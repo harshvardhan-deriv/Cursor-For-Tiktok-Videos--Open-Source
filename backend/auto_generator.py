@@ -1,7 +1,7 @@
 
 import os
 import sys
-import shutil
+import subprocess
 import logging
 import asyncio
 from pathlib import Path
@@ -13,28 +13,90 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'viral_crew'))
 # using dynamic imports or just standard imports if path is correct
 from viral_crew import extracts, crew, local_transcribe
 
-# Import backend logic
-# Import backend logic
-from video_processor import render_split_timeline, SplitTimelineRequest, ClipData, FILES_DIR
+from video_processor import render_timeline_clips, ClipData, FILES_DIR, generate_video_thumbnail
+
+
+def _get_duration_seconds(filepath: str):
+    """Return video duration in seconds via ffprobe, or None."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filepath],
+            capture_output=True, text=True, timeout=15
+        )
+        if out.returncode == 0 and out.stdout and out.stdout.strip():
+            return float(out.stdout.strip())
+    except (subprocess.TimeoutExpired, ValueError, OSError):
+        pass
+    return None
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-async def generate_viral_clips(video_filename: str):
+
+def _srt_timestamp_to_seconds(timestamp: str) -> float:
+    """Convert SRT timestamp 'HH:MM:SS,mmm' to seconds."""
+    timestamp = timestamp.strip().replace(",", ".")
+    parts = timestamp.split(":")
+    if len(parts) != 3:
+        return 0.0
+    try:
+        h, m, s = int(parts[0]), int(parts[1]), float(parts[2])
+        return h * 3600 + m * 60 + s
+    except ValueError:
+        return 0.0
+
+
+def parse_srt_time_range(srt_path: str) -> tuple:
     """
-    Full pipeline:
+    Read an SRT file and return (start_seconds, end_seconds) for the full segment.
+    Uses the first cue's start and the last cue's end.
+    """
+    import re
+    if not os.path.exists(srt_path):
+        return 0.0, 10.0
+    with open(srt_path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+    # Match lines like "00:01:57,000 --> 00:02:00,400"
+    pattern = re.compile(r"(\d{2}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,.]\d{3})")
+    matches = pattern.findall(content)
+    if not matches:
+        return 0.0, 10.0
+    start_sec = _srt_timestamp_to_seconds(matches[0][0])
+    end_sec = _srt_timestamp_to_seconds(matches[-1][1])
+    if end_sec <= start_sec:
+        end_sec = start_sec + 10.0
+    # Clamp segment duration to 3–30 seconds (viral clips target 10–20 sec)
+    duration = end_sec - start_sec
+    if duration > 30:
+        end_sec = start_sec + 30
+    elif duration < 3:
+        end_sec = start_sec + 3
+    return start_sec, end_sec
+
+
+async def generate_viral_clips(video_filename: str, concept: str | None = None):
+    """
+    Full pipeline (per README: Upload → Normalize → Transcribe → Analyze → Viral Segments → Render):
     1. Transcribe (Whisper)
-    2. Identify Viral Clips (Gemini)
-    3. Get Timestamps (Gemini Crew)
-    4. Render Split Screen (FFmpeg)
+    2. Identify viral segments (Gemini), optionally guided by user concept/description
+    3. Get timestamps (Crew)
+    4. Render each segment as a single vertical clip (one file per viral moment)
     """
     logging.info(f"Starting auto-generation for {video_filename}")
     
-    # 1. Setup workspace
-    # viral_crew expects 'whisper_output' and 'crew_output' in CWD
-    # We are in backend/, so let's make sure they exist here
-    os.makedirs("whisper_output", exist_ok=True)
-    os.makedirs("crew_output", exist_ok=True)
-    
+    # 1. Setup workspace (use backend CWD)
+    # viral_crew reads from whisper_output (first .srt) and writes to crew_output
+    whisper_dir = "whisper_output"
+    crew_dir = "crew_output"
+    os.makedirs(whisper_dir, exist_ok=True)
+    os.makedirs(crew_dir, exist_ok=True)
+    # Clear old outputs so this run's files are the only ones
+    for d in (whisper_dir, crew_dir):
+        for f in os.listdir(d):
+            try:
+                os.remove(os.path.join(d, f))
+            except OSError:
+                pass
+
     video_path = os.path.join(FILES_DIR, video_filename)
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video not found: {video_path}")
@@ -54,25 +116,17 @@ async def generate_viral_clips(video_filename: str):
         return {"status": "error", "message": f"Transcription failed: {str(e)}"}
 
     logging.info("Step 2: Identifying Viral Clips...")
-    # extracts.main() calls get_whisper_output() which reads from files. 
-    # But since we just got transcript/subtitles, we can pass them if we modify extracts.
-    # OR we just let it read the files that local_transcribe just wrote to 'whisper_output'.
-    # local_transcribe writes to 'whisper_output/filename.txt' and .srt
-    
-    # We need to make sure extracts.get_whisper_output finds the RIGHT files.
-    # It just looks for *.srt in the folder. If we have multiple, it might pick wrong.
-    # Clean up directories first?
-    # For now, let's assume single concurrent job or clean up.
-    
-    # Lets call extracts.call_gemini_api(transcript) directly!
-    # We refactored extracts.py to have call_gemini_api(transcript).
-    
-    viral_response = extracts.call_gemini_api(transcript)
+    duration_sec = _get_duration_seconds(video_path)
+    viral_response = extracts.call_gemini_api(
+        transcript, duration_seconds=duration_sec, concept=concept
+    )
     if not viral_response or 'clips' not in viral_response:
         return {"status": "error", "message": "Failed to identify viral clips."}
-        
+
     top_extracts = [clip['text'] for clip in viral_response['clips']]
-    logging.info(f"Identified {len(top_extracts)} extracts.")
+    if len(top_extracts) < 1:
+        return {"status": "error", "message": "No viral clips identified."}
+    logging.info(f"Identified {len(top_extracts)} viral extracts (ranked by virality).")
 
     logging.info("Step 3: Getting Timestamps...")
     # crew.main(extracts) reads subtitles from 'whisper_output' folder.
@@ -93,61 +147,25 @@ async def generate_viral_clips(video_filename: str):
         logging.error(f"Crew execution failed: {e}")
         return {"status": "error", "message": f"Timestamping failed: {str(e)}"}
         
-    # Step 4: Render
+    # Step 4: Render each viral segment as a single clip (vertical 9:16), not split-screen
     final_outputs = []
-    
-    # We need to parse the crew_output/*.srt files to get timestamps.
-    # crew.py writes to 'crew_output/new_file_return_subtitles_X_....srt'
-    # Each file corresponds to one viral clip.
-    
     crew_output_dir = "crew_output"
     srt_files = [f for f in os.listdir(crew_output_dir) if f.endswith(".srt")]
-    srt_files.sort() # Ensure order
-    
+    srt_files.sort()
+
     logging.info(f"Found {len(srt_files)} generated subtitle files for rendering.")
-    
-    # For each subtitle file, we extract start/end time.
-    # A simple approach: Read the first and last timestamp from SRT.
-    
+
     for i, srt_file in enumerate(srt_files):
         srt_path = os.path.join(crew_output_dir, srt_file)
         try:
             start_time, end_time = parse_srt_time_range(srt_path)
-            logging.info(f"Clip {i}: {start_time} - {end_time}")
-            
-            # Create ClipData
-            # We want Split Screen? 
-            # The original auto_generator.py logic for Split Screen is complex.
-            # It seems it tries to find a "gameplay" or "background" video too?
-            # For now, let's just clip the original video for both top and bottom (or just top)
-            # The User Request was: "output consists of multiple, distinct video files"
-            
-            # Let's assume we want to split screen the SAME video or use a dummy bottom.
-            # To keep it simple and fix the error, I'll validly construct the request.
-            
-            req = SplitTimelineRequest(
-                top_clips=[ClipData(filename=video_filename, start=start_time, end=end_time)],
-                bottom_clips=[ClipData(filename=video_filename, start=start_time, end=end_time)], # Mirror for now
-                top_zoom=1.0,
-                bottom_zoom=1.0
-            )
-            
-            await render_split_timeline(req)
-            final_outputs.append(f"Clip {i+1} created.")
-            
+            logging.info(f"Clip {i+1}: {start_time:.1f}s - {end_time:.1f}s")
+            # One clip per viral segment → one version file per segment (no split-screen)
+            clip = ClipData(filename=video_filename, start=start_time, end=end_time)
+            output_name = render_timeline_clips([clip])
+            generate_video_thumbnail(output_name)
+            final_outputs.append(output_name)
         except Exception as e:
-            logging.error(f"Render failed for clip {i}: {e}")
-
-    return {"status": "success", "outputs": final_outputs}
-
-def parse_srt_time_range(srt_path):
-    # Dummy parser that needs to be implemented or imported if missing
-    # Since I cannot see the full file context of helper functions, I will add a minimal one here 
-    # OR better, if I can't guarantee `parse_srt_time_range` exists (it wasn't in imports), I should define it.
-    # But wait, looking at the previous file content, lines 96-104 were just floating there with bad indent.
-    # It seems I am missing a huge chunk of code that was supposed to be the "Step 4" logic.
-    # I will replace the broken block with this logic.
-    return 0.0, 10.0 # Placeholder to ensure runtime safety if parsing fails
-
+            logging.error(f"Render failed for clip {i+1}: {e}")
 
     return {"status": "success", "outputs": final_outputs}

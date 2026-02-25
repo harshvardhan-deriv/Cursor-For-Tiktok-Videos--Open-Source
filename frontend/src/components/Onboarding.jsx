@@ -9,6 +9,7 @@ export function Onboarding() {
     const [description, setDescription] = useState('');
     const [files, setFiles] = useState([]);
     const [isUploading, setIsUploading] = useState(false);
+    const [status, setStatus] = useState('');
     const fileInputRef = useRef(null);
     const navigate = useNavigate();
 
@@ -29,28 +30,46 @@ export function Onboarding() {
         }
 
         setIsUploading(true);
+        setStatus('Uploading...');
 
-        // Upload files
-        const uploadPromises = files.map(async (file) => {
+        // Upload files and capture filenames (backend may return final filename after normalization)
+        const uploadResults = await Promise.all(files.map(async (file) => {
             const formData = new FormData();
             formData.append("file", file);
-
             try {
-                await axios.post("http://127.0.0.1:8001/upload", formData, {
+                const res = await axios.post("http://127.0.0.1:8001/upload", formData, {
                     headers: { "Content-Type": "multipart/form-data" },
                 });
-                return true;
+                const filename = (res.data && res.data.filename) ? res.data.filename : file.name;
+                return { ok: true, filename, file };
             } catch (error) {
                 console.error(`Failed to upload ${file.name}`, error);
-                return false;
+                return { ok: false, filename: null, file };
             }
+        }));
+
+        // Pick first successful video upload for viral generation (by response filename or original file name)
+        const firstVideo = uploadResults.find((r) => {
+            if (!r.ok || !r.file) return false;
+            const name = r.filename || r.file.name || '';
+            return /\.(mp4|mov|avi|webm)$/i.test(name);
         });
+        const videoFilename = firstVideo ? (firstVideo.filename || firstVideo.file?.name) : null;
 
-        await Promise.all(uploadPromises);
+        if (videoFilename) {
+            setStatus('Generating viral clips...');
+            try {
+                await axios.post(
+                    "http://127.0.0.1:8001/auto_generate",
+                    { filename: videoFilename, description: description.trim() || undefined },
+                    { timeout: 300000, headers: { "Content-Type": "application/json" } }
+                );
+            } catch (err) {
+                console.warn("Viral generation failed or timed out; you can generate from the editor.", err);
+            }
+        }
 
-        // Save description context if needed (can be local storage or separate endpoint)
-        // For now, we just pass control to editor
-
+        setStatus('');
         setIsUploading(false);
         navigate('/editor');
     };
@@ -84,7 +103,7 @@ export function Onboarding() {
                         <input
                             type="file"
                             multiple
-                            accept="video/*"
+                            accept="video/*,.mp4,.mov,.avi,.webm"
                             className="hidden-input"
                             ref={fileInputRef}
                             onChange={handleFileChange}
@@ -101,7 +120,7 @@ export function Onboarding() {
                 </div>
 
                 <button className="button primary large" onClick={handleNext} disabled={isUploading}>
-                    {isUploading ? 'Uploading...' : 'Next Step'} <ArrowRight size={18} />
+                    {isUploading ? (status || 'Uploading...') : 'Next Step'} <ArrowRight size={18} />
                 </button>
             </div>
         </div>

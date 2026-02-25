@@ -1,12 +1,14 @@
 
-from fastapi import FastAPI, File, UploadFile, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from google import genai
 from google.genai import types
 import shutil
 from dotenv import load_dotenv
 import os
+import sys
 from pydantic import BaseModel
 from typing import Tuple, Union
 import subprocess
@@ -20,26 +22,59 @@ import re
 import json
 import math
 from concurrent.futures import ThreadPoolExecutor
-import auto_generator # [NEW] Import for auto generator
-
+import auto_generator  # requires Python 3.10+ (CrewAI)
 
 app = FastAPI()
 load_dotenv()
+
+# Require Python 3.10+ for CrewAI and type hints (e.g. X | None)
+if sys.version_info < (3, 10):
+    raise RuntimeError(
+        "This application requires Python 3.10 or newer. "
+        "Use pyenv (pyenv install 3.12 && pyenv local 3.12) or install Python 3.12 from python.org."
+    )
+
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# CORS settings
+# CORS settings (Vite may use 5173 or 5174 when 5173 is in use)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:5173", "http://127.0.0.1:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-from video_processor import FILES_DIR, ClipData, SplitTimelineRequest, render_split_timeline as render_split_timeline_logic
+from video_processor import FILES_DIR, ClipData, SplitTimelineRequest, render_split_timeline as render_split_timeline_logic, render_timeline_clips
 
 # Mount the files directory to serve static files
 app.mount("/files", StaticFiles(directory=FILES_DIR), name="files")
+
+
+def _get_media_duration_seconds(filepath: str) -> Union[float, None]:
+    """Return duration in seconds via ffprobe, or None on failure."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filepath],
+            capture_output=True, text=True, timeout=10
+        )
+        if out.returncode == 0 and out.stdout and out.stdout.strip():
+            return float(out.stdout.strip())
+    except (subprocess.TimeoutExpired, ValueError, OSError):
+        pass
+    return None
+
+
+def _has_audio_stream(filepath: str) -> bool:
+    """Return True if the file has at least one audio stream."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_type", "-of", "default=noprint_wrappers=1:nokey=1", filepath],
+            capture_output=True, text=True, timeout=10
+        )
+        return out.returncode == 0 and out.stdout is not None and "audio" in out.stdout
+    except (subprocess.TimeoutExpired, OSError):
+        return False
 
 
 def audio_description(file: str, output_file: str):
@@ -120,15 +155,21 @@ def generate_snapshot(filename: str):
         print(f"Snapshot generation failed: {e.stderr}")
 
 # os.makedirs(UPLOAD_DIR, exist_ok=True)
+_FILES_DIR_PLACEHOLDER = "\0__FILES_DIR__\0"
+
 def ffmpeg_runner(ffmpeg_code: str):
-    print(ffmpeg_code)
+    # Rewrite model paths to actual files directory (use placeholder to avoid double-expansion; FILES_DIR itself contains "/files")
+    code = ffmpeg_code.replace('"/files/', '"' + _FILES_DIR_PLACEHOLDER).replace('"../files/', '"' + _FILES_DIR_PLACEHOLDER)
+    code = code.replace("/files/", _FILES_DIR_PLACEHOLDER).replace("../files/", _FILES_DIR_PLACEHOLDER)
+    code = code.replace(_FILES_DIR_PLACEHOLDER, FILES_DIR + "/")
+    print(code)
     try:
         process = subprocess.run(
-            ffmpeg_code, 
-            shell=True, 
-            check=True, 
+            code,
+            shell=True,
+            check=True,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, 
+            stderr=subprocess.STDOUT,
             text=True
         )
         print(process.stdout)
@@ -316,8 +357,8 @@ def analyze_transcript_in_chunks(video_filename: str, criteria: str, chunk_durat
     
     # 1. Get transcript
     transcript_json = read_transcript(video_filename)
-    if transform_error := is_error(transcript_json): 
-         return transform_error
+    if transform_error := is_error(transcript_json):
+        return transform_error
          
     try:
         words = json.loads(transcript_json)
@@ -334,10 +375,10 @@ def analyze_transcript_in_chunks(video_filename: str, criteria: str, chunk_durat
         video_end = 0
 
     if video_end == 0:
-         # Fallback if end time missing, just use list length approx
-         num_chunks = max(1, math.ceil(len(words) / 200)) # Approx 200 words per min??
-         # Better to just iterate
-         pass
+        # Fallback if end time missing, just use list length approx
+        num_chunks = max(1, math.ceil(len(words) / 200))  # Approx 200 words per min??
+        # Better to just iterate
+        pass
 
     # Better grouping logic:
     chunks = []
@@ -423,11 +464,12 @@ def is_error(s):
 from fastapi import BackgroundTasks
 
 @app.get("/media")
-async def list_media():
+async def list_media(background_tasks: BackgroundTasks):
     """List all available media files in the files directory."""
     files = []
     if os.path.exists(FILES_DIR):
-        for filename in os.listdir(FILES_DIR):
+        all_names = os.listdir(FILES_DIR)
+        for filename in all_names:
             if filename.startswith("normalized_"):
                 # We show the original name (part after normalized_) but allow accessing via normalized path if needed
                 # Actually, our upload logic renames normalized_X to X at the end.
@@ -440,17 +482,25 @@ async def list_media():
                 if filename.lower().endswith(('.mp4', '.mp3', '.wav', '.mkv', '.mov')):
                     # Determine type
                     media_type = "video" if filename.lower().endswith(('.mp4', '.mkv', '.mov')) else "audio"
-                    
+                    url = f"http://127.0.0.1:8001/files/{filename}"
+                    size_bytes = os.path.getsize(filepath)
+                    duration_seconds = _get_media_duration_seconds(filepath)
+                    is_viral_clip = filename.startswith("version") and filename.endswith(".mp4")
+                    thumb_path = os.path.join(FILES_DIR, f"{filename}.jpg")
+                    has_thumb = os.path.exists(thumb_path)
+                    if is_viral_clip and not has_thumb:
+                        background_tasks.add_task(generate_snapshot, filename)
                     files.append({
-                        "id": filename, # Use filename as ID for simplicity on existing files
+                        "id": filename,
                         "filename": filename,
-                        "url": f"http://127.0.0.1:8000/files/{filename}",
-                        "type": media_type,
+                        "url": url,
                         "type": media_type,
                         "uploadDate": os.path.getmtime(filepath),
-                        "thumbnailUrl": f"http://127.0.0.1:8000/files/{filename}.jpg" if os.path.exists(os.path.join(FILES_DIR, f"{filename}.jpg")) else None
+                        "thumbnailUrl": f"http://127.0.0.1:8001/files/{filename}.jpg" if has_thumb else None,
+                        "size": size_bytes,
+                        "durationSeconds": duration_seconds,
+                        "isViralClip": is_viral_clip
                     })
-    
     # Sort by date desc
     files.sort(key=lambda x: x['uploadDate'], reverse=True)
     return files
@@ -458,7 +508,6 @@ async def list_media():
 async def process_transcription(file_path: str):
     print(f"Starting transcription for {file_path}")
     output_dir = os.path.dirname(file_path)
-    
     # Run Whisper
     # We use --model base to be faster, but user can change to medium/large if needed for accuracy
     # --output_format json is critical for processing
@@ -479,12 +528,18 @@ async def process_transcription(file_path: str):
     except subprocess.CalledProcessError as e:
         print(f"Transcription failed for {file_path}: {e.output}")
 
+_MAX_VIDEO_DURATION_SECONDS = 4 * 3600  # 4 hours
+_ALLOWED_VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".webm")
+
 @app.post("/upload")
 async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     print(f"Uploading file: {file.filename}")
     if not file.filename:
         raise ValueError("No filename provided")
-    
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in _ALLOWED_VIDEO_EXTENSIONS and ext != ".mp3":
+        raise ValueError("Format not supported. Use one of: MP4, MOV, AVI, WebM, or MP3.")
+
     # Ensure FILES_DIR exists
     if not os.path.exists(FILES_DIR):
         try:
@@ -501,14 +556,25 @@ async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = Fil
         print(f"Error saving uploaded file: {e}")
         raise ValueError(f"Failed to save uploaded file: {e}")
 
+    # Enforce max duration for video (4 hours)
+    if ext in _ALLOWED_VIDEO_EXTENSIONS:
+        dur = _get_media_duration_seconds(file_path)
+        if dur is not None and dur > _MAX_VIDEO_DURATION_SECONDS:
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+            raise ValueError(f"Video exceeds maximum duration of 4 hours (got {int(dur // 3600)}h).")
+
     final_filename = file.filename
-    # We will invoke ffmpeg to normalize the file.
-    # Using list arguments for subprocess to avoid shell injection and quoting issues.
-    
-    if file.filename.endswith(".mp4"):
+    # Normalize/transcode video to standard format for processing.
+    if ext in _ALLOWED_VIDEO_EXTENSIONS:
         try:
             input_path = os.path.join(FILES_DIR, file.filename)
-            output_path = os.path.join(FILES_DIR, f"normalized_{file.filename}")
+            # Output as MP4; for non-MP4 inputs we write to .mp4 and replace
+            base = os.path.splitext(file.filename)[0]
+            out_name = f"normalized_{base}.mp4"
+            output_path = os.path.join(FILES_DIR, out_name)
             
             # Use list format for command
             command = [
@@ -524,17 +590,21 @@ async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = Fil
             
             print(f"Running normalization: {command}")
             result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            # If successful, swap files
+            # If successful: remove original, store as base.mp4 (MOV/AVI/WebM become MP4)
             os.remove(input_path)
-            os.rename(output_path, input_path)
+            final_mp4 = os.path.join(FILES_DIR, f"{base}.mp4")
+            if os.path.exists(final_mp4):
+                os.remove(final_mp4)
+            os.rename(output_path, final_mp4)
+            final_filename = f"{base}.mp4"
             
         except subprocess.CalledProcessError as e:
-            print(f"MP4 Normalization failed. Return code: {e.returncode}")
+            print(f"Video normalization failed. Return code: {e.returncode}")
             print(f"STDOUT: {e.stdout}")
             print(f"STDERR: {e.stderr}")
             # Identify common errors
             if "Permission denied" in e.stderr:
-                 raise ValueError("Server permission error during video processing.")
+                raise ValueError("Server permission error during video processing.")
             raise ValueError(f"Video processing failed: {e.stderr[:200]}...") # Return partial error to user
             
     elif file.filename.endswith(".mp3"):
@@ -627,11 +697,6 @@ async def user_query(query: Query) -> Tuple[bool, Union[int, str]]:
         print(e)
         return False, str(e)
 
-class ClipData(BaseModel):
-    filename: str
-    start: float = 0.0
-    end: float = 10.0
-
 class TimelineRequest(BaseModel):
     clips: list[ClipData]
 
@@ -661,7 +726,7 @@ async def generate_thumbnail(request: ThumbnailRequest):
                 break
         
         if not image_bytes:
-             raise ValueError("No image part found in response")
+            raise ValueError("No image part found in response")
 
         # Save to files directory
         output_filename = f"thumbnail_{uuid.uuid4()}.png"
@@ -681,51 +746,33 @@ async def generate_thumbnail(request: ThumbnailRequest):
         # but frontend handles error by using snapshot.
         raise HTTPException(status_code=500, detail=str(e))
 
+def _ensure_path_under_files_dir(filepath: str) -> str:
+    """Resolve path and ensure it is under FILES_DIR. Returns abspath or raises ValueError."""
+    resolved = os.path.abspath(filepath)
+    files_abs = os.path.abspath(FILES_DIR)
+    if not resolved.startswith(files_abs):
+        raise ValueError("Path must be under files directory")
+    return resolved
+
+
 @app.post("/render_timeline")
 async def render_timeline(request: TimelineRequest):
     print(f"Rendering timeline with clips: {request.clips}")
-    
-    if not request.clips:
-        raise ValueError("No clips provided")
-        
-    num_files = len([n for n in os.listdir(FILES_DIR) if n.startswith("version") and n.endswith(".mp4")])
-    output_filename = f"version{num_files+1}.mp4"
-    output_path = os.path.join(FILES_DIR, output_filename)
-    
-    inputs = []
-    filter_complex_parts = []
-    
-    for i, clip in enumerate(request.clips):
-        filename = clip.filename
-        if filename.startswith("version") and not filename.endswith(".mp4"):
-            filename += ".mp4"
-        
-        clip_path = os.path.join(FILES_DIR, filename)
-        inputs.extend(["-i", clip_path])
-        
-        # Apply trim and scale to vertical 1080x1920 (TikTok size)
-        filter_complex_parts.append(f"[{i}:v]trim=start={clip.start}:end={clip.end},setpts=PTS-STARTPTS,scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1[v{i}];")
-        filter_complex_parts.append(f"[{i}:a]atrim=start={clip.start}:end={clip.end},asetpts=PTS-STARTPTS[a{i}];")
-        
-    # Concat part
-    concat_inputs = "".join([f"[v{i}][a{i}]" for i in range(len(request.clips))])
-    concat_filter = f"{concat_inputs}concat=n={len(request.clips)}:v=1:a=1[outv][outa]"
-    
-    full_filter = "".join(filter_complex_parts) + concat_filter
-    
-    command = ["ffmpeg", "-y"] + inputs + [
-        "-filter_complex", full_filter,
-        "-map", "[outv]",
-        "-map", "[outa]",
-        "-c:v", "libx264", "-crf", "23", "-preset", "fast",
-        "-c:a", "aac", "-b:a", "192k",
-        output_path
-    ]
-    
-    print(f"Executing: {command}")
-    subprocess.run(command, check=True)
-    
-    return {"filename": output_filename, "message": "Timeline rendered successfully"}
+    try:
+        from video_processor import _safe_export_basename
+        download_basename = _safe_export_basename()
+        output_filename = render_timeline_clips(request.clips, output_filename=download_basename)
+        output_path = os.path.join(FILES_DIR, output_filename)
+        output_path = _ensure_path_under_files_dir(output_path)
+        return FileResponse(
+            path=output_path,
+            media_type="video/mp4",
+            filename=download_basename,
+            headers={"Content-Disposition": f'attachment; filename="{download_basename}"'}
+        )
+    except Exception as e:
+        print(f"Timeline render failed: {e}")
+        return JSONResponse(status_code=500, content={"detail": str(e)})
 
 class SplitTimelineRequest(BaseModel):
     top_clips: list[ClipData]
@@ -739,164 +786,129 @@ class SplitTimelineRequest(BaseModel):
 @app.post("/render_split_timeline")
 async def render_split_timeline(request: SplitTimelineRequest):
     print(f"Rendering split timeline.")
-    
-    if not request.top_clips and not request.bottom_clips:
-         raise ValueError("No clips provided for either timeline")
-         
-    num_files = len([n for n in os.listdir(FILES_DIR) if n.startswith("version") and n.endswith(".mp4")])
-    output_filename = f"version{num_files+1}.mp4"
-    output_path = os.path.join(FILES_DIR, output_filename)
+    try:
+        if not request.top_clips and not request.bottom_clips:
+            raise ValueError("No clips provided for either timeline")
+        from video_processor import _safe_export_basename
+        download_basename = _safe_export_basename()
+        output_filename = download_basename
+        output_path = os.path.join(FILES_DIR, output_filename)
+        num_files = len([n for n in os.listdir(FILES_DIR) if n.startswith("version") and n.endswith(".mp4")])
 
-    temp_top = os.path.join(FILES_DIR, f"temp_top_{num_files+1}.mp4")
-    temp_bottom = os.path.join(FILES_DIR, f"temp_bottom_{num_files+1}.mp4")
-    
-    def process_track(clips, output_temp):
-        if not clips:
-            # Create black filler
-            subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=1920x1080:d=5", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-shortest", output_temp], check=True)
-            return
+        temp_top = os.path.join(FILES_DIR, f"temp_top_{num_files+1}.mp4")
+        temp_bottom = os.path.join(FILES_DIR, f"temp_bottom_{num_files+1}.mp4")
 
+        def process_track(clips, output_temp):
+            """Render one track (top or bottom) to a temp file."""
+            if not clips:
+                subprocess.run(
+                    [
+                        "ffmpeg", "-y",
+                        "-f", "lavfi", "-i", "color=c=black:s=1920x1080:d=5",
+                        "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                        "-shortest", output_temp
+                    ],
+                    check=True,
+                )
+                return
+            inputs = []
+            filter_parts = []
+            for i, clip in enumerate(clips):
+                filename = clip.filename
+                if filename.startswith("version") and not filename.endswith(".mp4"):
+                    filename += ".mp4"
+                inputs.extend(["-i", os.path.join(FILES_DIR, filename)])
+                filter_parts.append(
+                    f"[{i}:v]trim=start={clip.start}:end={clip.end},setpts=PTS-STARTPTS,"
+                    f"scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1[v{i}];"
+                )
+                filter_parts.append(
+                    f"[{i}:a]atrim=start={clip.start}:end={clip.end},asetpts=PTS-STARTPTS[a{i}];"
+                )
+            concat_inputs = "".join([f"[v{i}][a{i}]" for i in range(len(clips))])
+            final_filter = "".join(filter_parts) + f"{concat_inputs}concat=n={len(clips)}:v=1:a=1[v][a]"
+            cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex", final_filter, "-map", "[v]", "-map", "[a]", output_temp]
+            subprocess.run(cmd, check=True)
+
+        process_track(request.top_clips, temp_top)
+        process_track(request.bottom_clips, temp_bottom)
+
+        temp_audio = None
+        if request.audio_clips:
+            temp_audio = os.path.join(FILES_DIR, f"temp_audio_{num_files+1}.mp3")
+            inputs = []
+            filter_parts = []
+            for i, clip in enumerate(request.audio_clips):
+                filename = clip.filename
+                inputs.extend(["-i", os.path.join(FILES_DIR, filename)])
+                filter_parts.append(f"[{i}:a]atrim=start={clip.start}:end={clip.end},asetpts=PTS-STARTPTS[a{i}];")
+            concat_inputs = "".join([f"[a{i}]" for i in range(len(request.audio_clips))])
+            final_filter = "".join(filter_parts) + f"{concat_inputs}concat=n={len(request.audio_clips)}:v=0:a=1[outa]"
+            cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex", final_filter, "-map", "[outa]", temp_audio]
+            subprocess.run(cmd, check=True)
+
+        dur_top = sum([c.end - c.start for c in request.top_clips])
+        dur_bottom = sum([c.end - c.start for c in request.bottom_clips])
+        if not request.top_clips:
+            dur_top = 5
+        if not request.bottom_clips:
+            dur_bottom = 5
+        max_dur = max(dur_top, dur_bottom)
         inputs = []
-        filter_parts = []
-        for i, clip in enumerate(clips):
-             filename = clip.filename
-             if filename.startswith("version") and not filename.endswith(".mp4"): filename += ".mp4"
-             inputs.extend(["-i", os.path.join(FILES_DIR, filename)])
-             
-             filter_parts.append(f"[{i}:v]trim=start={clip.start}:end={clip.end},setpts=PTS-STARTPTS,scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1[v{i}];")
-             filter_parts.append(f"[{i}:a]atrim=start={clip.start}:end={clip.end},asetpts=PTS-STARTPTS[a{i}];")
-        
-        concat_inputs = "".join([f"[v{i}][a{i}]" for i in range(len(clips))])
-        final_filter = "".join(filter_parts) + f"{concat_inputs}concat=n={len(clips)}:v=1:a=1[v][a]"
-        
-        cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex", final_filter, "-map", "[v]", "-map", "[a]", output_temp]
-        subprocess.run(cmd, check=True)
-
-    # 1. Process Top
-    process_track(request.top_clips, temp_top)
-    
-    # 2. Process Bottom
-    process_track(request.bottom_clips, temp_bottom)
-
-    # 3. Process Audio (BGM)
-    temp_audio = None
-    if request.audio_clips:
-        temp_audio = os.path.join(FILES_DIR, f"temp_audio_{num_files+1}.mp3")
-        # Reuse process_track but we only care about audio. However process_track does [v][a].
-        # We can just extract [a] from it or write a simpler audio processor.
-        # Simpler: just concat the audio clips.
-        # But process_track handles trimming. Let's use it but ignore video in final mix?
-        # Actually process_track generates a video file with black video if input is audio? 
-        # ffmpeg -i audio.mp3 -> it has no video stream. process_track expects video stream for [v{i}].
-        # We need a separate audio processor.
-        
-        inputs = []
-        filter_parts = []
-        for i, clip in enumerate(request.audio_clips):
-             filename = clip.filename
-             inputs.extend(["-i", os.path.join(FILES_DIR, filename)])
-             filter_parts.append(f"[{i}:a]atrim=start={clip.start}:end={clip.end},asetpts=PTS-STARTPTS[a{i}];")
-        
-        concat_inputs = "".join([f"[a{i}]" for i in range(len(request.audio_clips))])
-        final_filter = "".join(filter_parts) + f"{concat_inputs}concat=n={len(request.audio_clips)}:v=0:a=1[outa]"
-        
-        cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex", final_filter, "-map", "[outa]", temp_audio]
-        subprocess.run(cmd, check=True)
-
-    # 4. Stack
-    # Calculate durations to handle looping
-    dur_top = sum([c.end - c.start for c in request.top_clips])
-    dur_bottom = sum([c.end - c.start for c in request.bottom_clips])
-    if not request.top_clips: dur_top = 5
-    if not request.bottom_clips: dur_bottom = 5
-    
-    max_dur = max(dur_top, dur_bottom)
-    
-    inputs = []
-    
-    # Input 0: Top
-    if dur_top < max_dur:
-        inputs.extend(["-stream_loop", "-1", "-i", temp_top])
-    else:
-        inputs.extend(["-i", temp_top])
-        
-    # Input 1: Bottom
-    if dur_bottom < max_dur:
-        inputs.extend(["-stream_loop", "-1", "-i", temp_bottom])
-    else:
-        inputs.extend(["-i", temp_bottom])
-    
-    # Calculate crop/pad for top
-    # Base slot size: 1080x960.
-    # Logic:
-    # 1. Scale input to 1080x960 (force cover) -> [base]
-    # 2. Scale [base] by zoom -> [zoomed]
-    # 3. Crop/Pad [zoomed] to 1080x960
-    
-    def get_filter(idx, zoom, pan_y, label):
-        # pan_y is percent (-50 to 50). Positive means move visual DOWN.
-        # Offset in pixels = 960 * (pan_y / 100)
-        # If visual moves down, crop window moves UP (y decreases).
-        # So we subtract offset.
-        offset = f"(960*({pan_y}/100))"
-        
-        chain = f"[{idx}:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1,scale=iw*{zoom}:-1[z{label}];"
-        
-        if zoom >= 1:
-            # Crop
-            # x = (iw-1080)/2
-            # y = (ih-960)/2 - offset
-            chain += f"[z{label}]crop=1080:960:(iw-1080)/2:(ih-960)/2-({offset})[{label}];"
+        if dur_top < max_dur:
+            inputs.extend(["-stream_loop", "-1", "-i", temp_top])
         else:
-            # Pad
-            # x = (1080-iw)/2
-            # y = (960-ih)/2 + offset (Pad adds space, wait. If image is small, padding centers it.)
-            # If we want to move small image DOWN, we increase top padding?
-            # pad args: w:h:x:y:color
-            # x,y are offsets of input inside padded area.
-            # Default (1080-iw)/2 centers it.
-            # If we want visual DOWN, we ADD to y.
-            # So y = (960-ih)/2 + offset
-            chain += f"[z{label}]pad=1080:960:(1080-iw)/2:(960-ih)/2+({offset}):black[{label}];"
-        return chain
+            inputs.extend(["-i", temp_top])
+        if dur_bottom < max_dur:
+            inputs.extend(["-stream_loop", "-1", "-i", temp_bottom])
+        else:
+            inputs.extend(["-i", temp_bottom])
 
-    top_filter = get_filter(0, request.top_zoom, request.top_pan_y, "topv")
-    bot_filter = get_filter(1, request.bottom_zoom, request.bottom_pan_y, "botv")
+        def get_filter(idx, zoom, pan_y, label):
+            offset = f"(960*({pan_y}/100))"
+            chain = f"[{idx}:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1,scale=iw*{zoom}:-1[z{label}];"
+            if zoom >= 1:
+                chain += f"[z{label}]crop=1080:960:(iw-1080)/2:(ih-960)/2-({offset})[{label}];"
+            else:
+                chain += f"[z{label}]pad=1080:960:(1080-iw)/2:(960-ih)/2+({offset}):black[{label}];"
+            return chain
 
-    complex_filter = [
-        top_filter,
-        bot_filter,
-        "[topv][botv]vstack=inputs=2[v];"
-    ]
-    
-    # Render command
+        top_filter = get_filter(0, request.top_zoom, request.top_pan_y, "topv")
+        bot_filter = get_filter(1, request.bottom_zoom, request.bottom_pan_y, "botv")
+        complex_filter = [top_filter, bot_filter, "[topv][botv]vstack=inputs=2[v];"]
+        if temp_audio:
+            inputs.extend(["-i", temp_audio])
+            complex_filter.append("[0:a][1:a][2:a]amix=inputs=3[a]")
+        else:
+            complex_filter.append("[0:a][1:a]amix=inputs=2[a]")
+        stack_cmd = ["ffmpeg", "-y"] + inputs + [
+            "-filter_complex", "".join(complex_filter),
+            "-map", "[v]", "-map", "[a]",
+            "-c:v", "libx264", "-crf", "23", "-preset", "fast",
+            "-c:a", "aac", "-b:a", "192k",
+            "-t", str(max_dur),
+            output_path
+        ]
+        print(f"Stacking: {stack_cmd}")
+        subprocess.run(stack_cmd, check=True)
 
-    if temp_audio:
-        inputs.extend(["-i", temp_audio])
-        # Mix 3 inputs: Top Audio [0:a], Bottom Audio [1:a], BGM [2:a]
-        complex_filter.append("[0:a][1:a][2:a]amix=inputs=3[a]")
-    else:
-        # Mix 2 inputs
-        complex_filter.append("[0:a][1:a]amix=inputs=2[a]")
+        if os.path.exists(temp_top):
+            os.remove(temp_top)
+        if os.path.exists(temp_bottom):
+            os.remove(temp_bottom)
+        if temp_audio and os.path.exists(temp_audio):
+            os.remove(temp_audio)
 
-    stack_cmd = ["ffmpeg", "-y"] + inputs + [
-        "-filter_complex", "".join(complex_filter),
-        "-map", "[v]", "-map", "[a]",
-        "-c:v", "libx264", "-crf", "23", "-preset", "fast",
-        "-c:a", "aac", "-b:a", "192k",
-        "-t", str(max_dur),
-        output_path
-    ]
-    
-    print(f"Stacking: {stack_cmd}")
-    subprocess.run(stack_cmd, check=True)
-    
-    # Cleanup
-    if os.path.exists(temp_top): os.remove(temp_top)
-    if os.path.exists(temp_bottom): os.remove(temp_bottom)
-    if temp_audio and os.path.exists(temp_audio): os.remove(temp_audio)
-    
-    return {"filename": output_filename, "message": "Split timeline rendered successfully"}
+        output_path = _ensure_path_under_files_dir(output_path)
+        return FileResponse(
+            path=output_path,
+            media_type="video/mp4",
+            filename=download_basename,
+            headers={"Content-Disposition": f'attachment; filename="{download_basename}"'}
+        )
+    except Exception as e:
+        print(f"Split timeline render failed: {e}")
+        return JSONResponse(status_code=500, content={"detail": str(e)})
 
 @app.delete("/delete/{filename}")
 async def delete_file(filename: str):
@@ -930,12 +942,8 @@ class AutoGenRequest(BaseModel):
 @app.post("/auto_generate")
 async def auto_generate_endpoint(request: AutoGenRequest, background_tasks: BackgroundTasks):
     print(f"Received auto-generate request for {request.filename}")
-    
-    # We can run this in background
-    # background_tasks.add_task(auto_generator.generate_viral_clips, request.filename)
-    # But user might want immediate feedback or at least status.
-    # Let's run it and return the result for now (it takes time though).
-    
-    # Better: Run it and return.
-    result = await auto_generator.generate_viral_clips(request.filename)
-    return result
+    try:
+        result = await auto_generator.generate_viral_clips(request.filename)
+        return result
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"detail": str(e)})
